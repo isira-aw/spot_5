@@ -62,6 +62,30 @@ def _connect_args(url: str, connect_timeout_s: int | None = None) -> dict[str, A
     return args
 
 
+def _tune_sqlite(engine: Engine) -> None:
+    """Make the single file safe for the scheduler's background threads.
+
+    Out of the box SQLite serialises everything and raises *database is locked*
+    the moment the scheduler writes while a request reads. WAL lets readers and
+    the writer proceed at once, and ``busy_timeout`` makes a contended write wait
+    its turn instead of failing instantly. ``synchronous=NORMAL`` is the standard
+    companion to WAL: durable across process crashes, which is the case that
+    matters here.
+    """
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _pragmas(dbapi_conn, _record):                       # noqa: ANN001
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.execute("PRAGMA busy_timeout=10000")
+            cur.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cur.close()
+
+
 def get_engine(connect_timeout_s: int | None = None) -> Engine:
     global _engine, _Session
     if _engine is not None:
@@ -84,6 +108,8 @@ def get_engine(connect_timeout_s: int | None = None) -> Engine:
             kwargs.update(pool_size=s.db.pool_size, max_overflow=s.db.max_overflow,
                           pool_recycle=s.db.pool_recycle_s, pool_timeout=30)
         _engine = create_engine(url, **kwargs)
+        if url.startswith("sqlite"):
+            _tune_sqlite(_engine)
         _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
         log.info("database engine ready: %s (from %s)", s.db.safe_url(), s.db.source)
         return _engine

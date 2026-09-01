@@ -67,14 +67,19 @@ MODES = (PAPER, REAL)
 
 
 def normalize_db_url(url: str) -> str:
-    """SQLAlchemy 2 refuses the bare ``postgres://`` scheme Railway hands out."""
+    """SQLAlchemy 2 refuses the bare ``postgres://`` scheme Railway hands out.
+
+    Only Postgres URLs are rewritten, and only the scheme. Everything else is
+    returned untouched — a round trip through ``urlunparse`` silently rewrites
+    ``sqlite:///C:/x.db`` as ``sqlite:/C:/x.db`` (an empty netloc collapses the
+    slashes), which SQLAlchemy then refuses to parse at all.
+    """
     if not url:
         return ""
     u = urlparse(url)
-    scheme = u.scheme
-    if scheme in ("postgres", "postgresql"):
-        scheme = "postgresql+psycopg2"
-    return urlunparse(u._replace(scheme=scheme))
+    if u.scheme not in ("postgres", "postgresql"):
+        return url
+    return urlunparse(u._replace(scheme="postgresql+psycopg2"))
 
 
 INTERNAL_SUFFIX = ".railway.internal"
@@ -100,6 +105,17 @@ def _host_of(url: str) -> str:
 
 def _is_internal(host: str) -> bool:
     return host.endswith(INTERNAL_SUFFIX) or host == "postgres"
+
+
+def _sqlite_url() -> str:
+    """The zero-configuration default: one file under ``backend/var/``.
+
+    Nothing to install, nothing to fill in, no network in the path. Override the
+    location with ``DB_PATH`` if you want the file somewhere else.
+    """
+    path = _env("DB_PATH", os.path.join(BASE_DIR, "var", "spot5.db"))
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    return "sqlite:///" + os.path.abspath(path).replace("\\", "/")
 
 
 def _resolve_database() -> tuple[str, str]:
@@ -143,18 +159,14 @@ def _resolve_database() -> tuple[str, str]:
     host = _env("PGHOST", "localhost")
     port = _env("PGPORT", "5432")
     database = _env("PGDATABASE") or _env("POSTGRES_DB", "railway")
-    if not on_rail and _is_internal(host):
-        return "", "unusable"
-    # A Railway URL was configured but is unreachable from here. Defaulting to
-    # localhost would quietly connect to *a different database* and look like a
-    # success, so refuse instead and let database_hint() say why.
-    if skipped_internal and not _env("PGHOST"):
-        return "", "unusable"
-    # Same reasoning for a blank config: PGHOST defaults to localhost, so an
-    # empty .env would otherwise dial whatever Postgres happens to run on this
-    # machine. Off Railway, require something deliberate before assuming that.
+    # Nothing usable was configured: fall back to the local SQLite file rather
+    # than guessing at a Postgres on localhost, which would quietly connect to
+    # *a different database* and look like a success. Same when the only thing
+    # configured is Railway's private hostname, which cannot resolve from here.
+    if not on_rail and (skipped_internal or _is_internal(host)):
+        return _sqlite_url(), "SQLite (Railway's private hostname is unreachable from here)"
     if not on_rail and not _env("PGHOST") and not password:
-        return "", "unusable"
+        return _sqlite_url(), "SQLite (nothing configured)"
     auth = f"{quote_plus(user)}:{quote_plus(password)}@" if password else f"{quote_plus(user)}@"
     return f"postgresql+psycopg2://{auth}{host}:{port}/{database}", "PG* variables"
 
@@ -168,16 +180,11 @@ def _database_source() -> str:
 
 
 def database_hint() -> str:
-    """Why there is no usable URL — shown instead of a bare 'not configured'."""
+    """Why there is no usable URL. Normally unreachable: resolution always ends
+    at the local SQLite file, so this only fires if that file cannot be created."""
     if _database_url():
         return ""
-    if _is_internal(_host_of(_env("DATABASE_URL"))) or _is_internal(_env("PGHOST")):
-        return ("the only database configured is Railway's private hostname "
-                f"({_env('PGHOST') or _host_of(_env('DATABASE_URL'))}), which resolves only "
-                "inside the Railway network — set DATABASE_PUBLIC_URL for local runs")
-    return ("nothing is filled in — paste DATABASE_PUBLIC_URL from Railway → Postgres → "
-            "Variables into backend/.env (DATABASE_URL is the private hostname and is used "
-            "only when deployed)")
+    return f"could not create the SQLite file under {os.path.join(BASE_DIR, 'var')} — check permissions"
 
 
 @dataclass(frozen=True)
@@ -202,10 +209,10 @@ class DatabaseSettings:
         if not self.url:
             return ""
         u = urlparse(self.url)
-        if u.password:
-            netloc = u.netloc.replace(f":{u.password}@", ":***@")
-            u = u._replace(netloc=netloc)
-        return urlunparse(u)
+        if not u.password:              # nothing to hide, and see normalize_db_url:
+            return self.url             # urlunparse would mangle a sqlite:/// URL
+        netloc = u.netloc.replace(f":{u.password}@", ":***@")
+        return urlunparse(u._replace(netloc=netloc))
 
 
 @dataclass(frozen=True)
