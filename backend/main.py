@@ -53,8 +53,10 @@ def boot(wait_seconds: int = 120) -> dict:
              settings.execution.mode, settings.execution.symbol, settings.env)
 
     if not wait_for_db(wait_seconds):
+        if not settings.db.url:
+            raise RuntimeError(f"no database configured — {last_wait_error()}")
         raise RuntimeError(f"database did not answer within {wait_seconds}s: "
-                           f"{settings.db.safe_url()}"
+                           f"{settings.db.safe_url()} (from {settings.db.source})"
                            + (f" — last error: {last_wait_error()}" if last_wait_error() else ""))
     init_db()
 

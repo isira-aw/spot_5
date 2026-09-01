@@ -16,10 +16,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
+import struct
 import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator
+from urllib.parse import urlparse
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -69,7 +72,8 @@ def get_engine(connect_timeout_s: int | None = None) -> Engine:
         s = get_settings()
         url = s.db.url
         if not url:
-            raise RuntimeError("No database configured: set DATABASE_URL or the PG* variables.")
+            from .config import database_hint
+            raise RuntimeError(f"No database configured: {database_hint()}")
         kwargs: dict[str, Any] = {
             "future": True,
             "echo": s.db.echo,
@@ -81,7 +85,7 @@ def get_engine(connect_timeout_s: int | None = None) -> Engine:
                           pool_recycle=s.db.pool_recycle_s, pool_timeout=30)
         _engine = create_engine(url, **kwargs)
         _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
-        log.info("database engine ready: %s", s.db.safe_url())
+        log.info("database engine ready: %s (from %s)", s.db.safe_url(), s.db.source)
         return _engine
 
 
@@ -246,6 +250,57 @@ def healthcheck(connect_timeout_s: int | None = None) -> dict[str, Any]:
                 "url": get_settings().db.safe_url(), "outbox": outbox_size()}
 
 
+def probe_endpoint(timeout_s: float = 5.0) -> str:
+    """Say *where* the connection dies, below the driver.
+
+    ``connect_timeout expired`` is the same message whether DNS is wrong, the
+    port is shut, or the port answers but nothing behind it speaks Postgres —
+    and the third case is the one that looks like a working endpoint to
+    ``Test-NetConnection``, because a TCP proxy completes the handshake for
+    ports it has no service mapped to. So: resolve, connect, then send an 8-byte
+    SSLRequest and see whether a Postgres server is actually on the far end.
+    Read-only, no credentials sent, no bytes beyond the protocol preamble.
+    """
+    url = get_settings().db.url
+    if not url or url.startswith("sqlite"):
+        return ""
+    u = urlparse(url)
+    host, port = u.hostname, u.port or 5432
+    if not host:
+        return ""
+
+    try:
+        socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        return f"DNS lookup for {host} failed ({exc.__class__.__name__}) — check the host in DATABASE_URL"
+
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout_s)
+    except OSError as exc:
+        return (f"TCP connect to {host}:{port} failed ({exc.__class__.__name__}) — "
+                f"the port is closed or blocked upstream")
+
+    try:
+        sock.settimeout(timeout_s)
+        sock.sendall(struct.pack("!ii", 8, 80877103))       # postgres SSLRequest
+        reply = sock.recv(1)
+    except OSError:
+        return (f"TCP to {host}:{port} connects but the server never answers the Postgres "
+                f"handshake — that port is not mapped to the database (a proxy accepts the "
+                f"connection for any port). Re-copy DATABASE_URL from the Railway service's "
+                f"Connect tab; the public proxy port changes when the service is redeployed.")
+    finally:
+        try:
+            sock.close()
+        except OSError:                                     # pragma: no cover
+            pass
+
+    if reply in (b"S", b"N"):
+        return (f"{host}:{port} is a live Postgres endpoint — the handshake gets through, so "
+                f"the timeout is in authentication or TLS, not in reaching the server")
+    return f"{host}:{port} answered the Postgres handshake with {reply!r}, which is not a Postgres server"
+
+
 def wait_for_db(timeout_s: int = 120) -> bool:
     """Block until Postgres answers or the timeout expires. Used at boot.
 
@@ -258,6 +313,14 @@ def wait_for_db(timeout_s: int = 120) -> bool:
     """
     global _last_wait_error
     _last_wait_error = ""
+
+    # A missing URL is not a transient condition — waiting cannot fix it.
+    if not get_settings().db.url:
+        from .config import database_hint
+        _last_wait_error = database_hint()
+        log.error("no database configured: %s", _last_wait_error)
+        return False
+
     deadline, delay, attempt = time.time() + timeout_s, 1.0, 0
     while True:
         remaining = deadline - time.time()
@@ -280,6 +343,12 @@ def wait_for_db(timeout_s: int = 120) -> bool:
         reset_engine()
         time.sleep(pause)
         delay = min(delay * 2, 15.0)
+
+    # Gave up. Probe once — cheap, and it turns "timeout expired" into a reason.
+    hint = probe_endpoint()
+    if hint:
+        log.error("endpoint probe: %s", hint)
+        _last_wait_error = f"{_last_wait_error} | {hint}" if _last_wait_error else hint
     return False
 
 

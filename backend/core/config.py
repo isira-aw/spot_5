@@ -77,23 +77,113 @@ def normalize_db_url(url: str) -> str:
     return urlunparse(u._replace(scheme=scheme))
 
 
-def _database_url() -> str:
-    direct = _env("DATABASE_URL") or _env("DATABASE_PUBLIC_URL")
-    if direct:
-        return normalize_db_url(direct)
+INTERNAL_SUFFIX = ".railway.internal"
 
+
+def _on_railway() -> bool:
+    """True when this process is running *inside* the Railway network.
+
+    Railway injects these into every deployment and into nothing else, so their
+    presence is what decides whether the private hostname is usable.
+    """
+    return bool(_env("RAILWAY_ENVIRONMENT") or _env("RAILWAY_ENVIRONMENT_NAME")
+                or _env("RAILWAY_SERVICE_ID") or _env("RAILWAY_PROJECT_ID")
+                or _env("RAILWAY_PRIVATE_DOMAIN"))
+
+
+def _host_of(url: str) -> str:
+    try:
+        return (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _is_internal(host: str) -> bool:
+    return host.endswith(INTERNAL_SUFFIX) or host == "postgres"
+
+
+def _resolve_database() -> tuple[str, str]:
+    """Pick the right URL for *where this process actually runs*.
+
+    Railway hands out two URLs for one database and they are not
+    interchangeable:
+
+    * ``DATABASE_URL`` → ``postgres.railway.internal``, resolvable only from
+      inside the Railway network. Free, fast, no proxy in the path.
+    * ``DATABASE_PUBLIC_URL`` → ``<name>.proxy.rlwy.net:<port>``, the TCP proxy,
+      which is the only one a laptop can reach.
+
+    Preferring ``DATABASE_URL`` everywhere — as this used to — means a local run
+    tries to resolve a hostname that does not exist off-platform, which fails
+    slowly and confusingly rather than immediately. So: private first on
+    Railway, public first everywhere else, and an internal hostname is *never*
+    used off-platform even if it is the only thing configured.
+
+    Returns ``(url, source)`` — the source names which variable won, so the boot
+    log can say which of the two it dialled.
+    """
+    on_rail = _on_railway()
+    order = ("DATABASE_URL", "DATABASE_PUBLIC_URL") if on_rail else \
+            ("DATABASE_PUBLIC_URL", "DATABASE_URL")
+
+    skipped_internal = False
+    for name in order:
+        raw = _env(name)
+        if not raw:
+            continue
+        if not on_rail and _is_internal(_host_of(raw)):
+            skipped_internal = True         # unreachable from here; try the next one
+            continue
+        return normalize_db_url(raw), name
+
+    # Discrete vars. Railway sets PGHOST to the internal host too, so it gets
+    # the same treatment; POSTGRES_* carry no host and default to localhost.
     user = _env("PGUSER") or _env("POSTGRES_USER", "postgres")
     password = _env("PGPASSWORD") or _env("POSTGRES_PASSWORD")
     host = _env("PGHOST", "localhost")
     port = _env("PGPORT", "5432")
     database = _env("PGDATABASE") or _env("POSTGRES_DB", "railway")
+    if not on_rail and _is_internal(host):
+        return "", "unusable"
+    # A Railway URL was configured but is unreachable from here. Defaulting to
+    # localhost would quietly connect to *a different database* and look like a
+    # success, so refuse instead and let database_hint() say why.
+    if skipped_internal and not _env("PGHOST"):
+        return "", "unusable"
+    # Same reasoning for a blank config: PGHOST defaults to localhost, so an
+    # empty .env would otherwise dial whatever Postgres happens to run on this
+    # machine. Off Railway, require something deliberate before assuming that.
+    if not on_rail and not _env("PGHOST") and not password:
+        return "", "unusable"
     auth = f"{quote_plus(user)}:{quote_plus(password)}@" if password else f"{quote_plus(user)}@"
-    return f"postgresql+psycopg2://{auth}{host}:{port}/{database}"
+    return f"postgresql+psycopg2://{auth}{host}:{port}/{database}", "PG* variables"
+
+
+def _database_url() -> str:
+    return _resolve_database()[0]
+
+
+def _database_source() -> str:
+    return _resolve_database()[1]
+
+
+def database_hint() -> str:
+    """Why there is no usable URL — shown instead of a bare 'not configured'."""
+    if _database_url():
+        return ""
+    if _is_internal(_host_of(_env("DATABASE_URL"))) or _is_internal(_env("PGHOST")):
+        return ("the only database configured is Railway's private hostname "
+                f"({_env('PGHOST') or _host_of(_env('DATABASE_URL'))}), which resolves only "
+                "inside the Railway network — set DATABASE_PUBLIC_URL for local runs")
+    return ("nothing is filled in — paste DATABASE_PUBLIC_URL from Railway → Postgres → "
+            "Variables into backend/.env (DATABASE_URL is the private hostname and is used "
+            "only when deployed)")
 
 
 @dataclass(frozen=True)
 class DatabaseSettings:
     url: str = field(default_factory=_database_url)
+    source: str = field(default_factory=_database_source)
     sslmode: str = field(default_factory=lambda: _env("PGSSLMODE", "prefer"))
     pool_size: int = field(default_factory=lambda: _int("DB_POOL_SIZE", 5))
     max_overflow: int = field(default_factory=lambda: _int("DB_MAX_OVERFLOW", 5))
