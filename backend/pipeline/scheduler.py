@@ -5,7 +5,7 @@
   promotes only if it wins, and prunes to the newest ten versions.
 * **maintenance** — database health, outbox replay, knowledge-base refresh,
   heartbeat.
-* **the trading lock** — only the instance holding the Postgres advisory lock
+* **the trading lock** — only the instance holding the trading lock
   trades; the others keep serving the API. That is what makes "start the new box
   before shutting down the old one" safe.
 

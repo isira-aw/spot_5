@@ -2,19 +2,19 @@
 
 The normal path needs no tool at all: every piece of state — ledgers, trades,
 equity curves, the knowledge base, the admin restrictions and the trained risk
-models — is a row in Postgres, so a new host with the same ``DATABASE_URL`` is
-already the same desk. Start it, and it picks up where the old one stopped.
+models — is a row in ``backend/var/spot5.db``, so copying that one file to a new
+host makes it the same desk. Start it, and it picks up where the old one stopped.
 
 This tool is for the other two cases:
 
-* moving to a *different* database (Railway to self-hosted, or the reverse), where
-  a JSON export/import is easier than arranging network access between them;
+* merging or reshaping a desk, where a readable JSON export/import beats copying
+  an opaque binary file;
 * proving the move worked, with ``verify`` — row counts, the active knowledge base,
   the active risk model and both books' statistics, on either side.
 
     python backend/tools/migrate.py verify
     python backend/tools/migrate.py export --out desk.json
-    DATABASE_URL=<new> python backend/tools/migrate.py import --in desk.json
+    DB_PATH=<new.db> python backend/tools/migrate.py import --in desk.json
 """
 from __future__ import annotations
 

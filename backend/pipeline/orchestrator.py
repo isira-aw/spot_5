@@ -10,7 +10,7 @@ because neither depends on the other. The risk engine runs after them because it
 scores their agreement. The Agent runs last because it is the only one allowed to
 decide.
 
-Every cycle is written to Postgres as a unit — the signals, the risk assessment,
+Every cycle is written to the database as a unit — the signals, the risk assessment,
 the decision, the order — so any decision can be reconstructed months later with
 the exact inputs that produced it.
 """

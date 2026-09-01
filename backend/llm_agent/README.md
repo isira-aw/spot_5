@@ -58,7 +58,7 @@ rule-bearing sections, which do not consume the size budget.
 attribute; a refresh parses the new text into a new snapshot and only then rebinds
 the attribute. A reader holding a reference for the length of a prompt build can
 never see a half-parsed file. A broken edit is rejected and the previous version
-keeps serving. Every good version is stored in Postgres by SHA-256, so a host with
+keeps serving. Every good version is stored in the database by SHA-256, so a host with
 no local file loads the knowledge base from the database.
 
 ```bash

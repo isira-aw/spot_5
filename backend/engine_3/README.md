@@ -7,13 +7,13 @@ setup shaped like this one usually end?* — as a win probability, an expected v
 in R, a size multiplier and, when warranted, a veto.
 
 ```
-history in Postgres ──▶ dataset ──▶ train candidates ──▶ evaluate on an unseen tail
+history in the database ──▶ dataset ──▶ train candidates ──▶ evaluate on an unseen tail
                                                               │
                             heuristic floor ──────────────────┤
                                                               ▼
                                              promote only if it beats BOTH
                                                               │
-                                              store as bytes in Postgres
+                                              store as bytes in the database
                                                               │
                                               prune to the newest 10 + active
                                                               │
@@ -65,7 +65,7 @@ it does not recognise with a neutral default.
 * **`gbm`** — histogram gradient boosting, only once there are ≥150 training rows.
 
 All three serialize to bytes (`joblib` or JSON), which is what lets them live in a
-Postgres column.
+database column.
 
 ## The gate
 

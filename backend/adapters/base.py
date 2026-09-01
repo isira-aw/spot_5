@@ -8,7 +8,7 @@ Every adapter gets, for free:
   in the trading loop,
 * a short in-process cache so a 15-minute cycle does not re-run a 60-second model
   when nothing has changed,
-* a last-known-good fallback read from Postgres, clearly marked ``stale`` so the
+* a last-known-good fallback read from the database, clearly marked ``stale`` so the
   Agent can discount it in its own words.
 """
 from __future__ import annotations

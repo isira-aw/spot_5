@@ -193,7 +193,7 @@ class PortfolioState(_Serializable):
 # ── admin restrictions ───────────────────────────────────────────────────────
 @dataclass
 class AdminRestrictions(_Serializable):
-    """Operator policy. Loaded from Postgres, merged over the env-var hard caps.
+    """Operator policy. Loaded from the database, merged over the env-var hard caps.
 
     Two things happen with these: they are *enforced* mechanically in
     :mod:`execution.risk_guard`, and they are *shown to the Agent* in plain

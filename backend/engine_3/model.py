@@ -14,7 +14,7 @@
 ``gbm``
     Histogram gradient boosting, once there are enough trades to justify it.
 
-Every flavour serializes to bytes so the whole thing can live in a Postgres
+Every flavour serializes to bytes so the whole thing can live in a database
 column and follow the deployment to a new machine.
 """
 from __future__ import annotations

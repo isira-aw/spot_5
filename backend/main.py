@@ -8,9 +8,10 @@
 
 Boot order matters: the database has to answer before anything else is worth
 starting, because the knowledge base, the risk model, the ledgers and the
-restrictions all live in it. If Postgres is not up yet — a fresh Railway
-deployment, a laptop that just woke up — the process waits for it rather than
-starting in a state where it would trade without its own memory.
+restrictions all live in it. The database is a local SQLite file created on
+first run, so this normally succeeds immediately; if it cannot be opened the
+process stops rather than starting in a state where it would trade without its
+own memory.
 """
 from __future__ import annotations
 
@@ -53,11 +54,8 @@ def boot(wait_seconds: int = 120) -> dict:
              settings.execution.mode, settings.execution.symbol, settings.env)
 
     if not wait_for_db(wait_seconds):
-        if not settings.db.url:
-            raise RuntimeError(f"no database configured — {last_wait_error()}")
-        raise RuntimeError(f"database did not answer within {wait_seconds}s: "
-                           f"{settings.db.safe_url()} (from {settings.db.source})"
-                           + (f" — last error: {last_wait_error()}" if last_wait_error() else ""))
+        raise RuntimeError(f"database unusable after {wait_seconds}s: {settings.db.safe_url()}"
+                           + (f" — {last_wait_error()}" if last_wait_error() else ""))
     init_db()
 
     problems = risk_guard.live_mode_preflight()

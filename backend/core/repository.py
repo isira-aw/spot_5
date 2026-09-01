@@ -481,7 +481,7 @@ def _parse_ts(value) -> datetime | None:
 
 
 def rebuild_cycle(payload: dict) -> None:
-    """Re-insert a cycle that was spooled while Postgres was unreachable.
+    """Re-insert a cycle that was spooled while the database was unwritable.
 
     Written straight from the serialized dict rather than by rehydrating the
     dataclasses, so a schema change in the contracts cannot make an old spooled

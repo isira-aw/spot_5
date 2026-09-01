@@ -91,7 +91,7 @@ def test_every_good_version_is_written_to_the_database(env, tmp_path):
 
 
 def test_a_host_with_no_file_loads_the_knowledge_base_from_the_database(env, tmp_path):
-    """The migration case: new machine, same Postgres, no local copy."""
+    """The migration case: new machine, same database, no local copy."""
     from llm_agent.knowledge_base import KnowledgeBaseStore
     path = tmp_path / "kb.md"
     path.write_text(SAMPLE)

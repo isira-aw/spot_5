@@ -11,7 +11,7 @@ backend/var/
 *.db
 *.sqlite3
 
-# engine artefacts: models live in Postgres, these are local caches
+# engine artefacts: models live in the database, these are local caches
 backend/engine_2/models/
 backend/engine_2/models_candidate/
 backend/engine_2/models_prev/

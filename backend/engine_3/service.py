@@ -8,7 +8,7 @@ veto.
 Two properties matter operationally:
 
 * **Loads from the database at start.** No model file, no warm-up, no shared
-  volume. Whatever version is marked active in Postgres is what scores the next
+  volume. Whatever version is marked active in the database is what scores the next
   cycle, on any machine.
 * **Hot-swaps without a restart.** A training job that promotes a new version is
   picked up on the next cycle: the service re-checks the active version number on

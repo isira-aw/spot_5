@@ -3,16 +3,16 @@
 Design rule: **nothing important is kept on local disk.** Engine outputs, the
 Agent's decisions, orders, trades, both equity curves, the knowledge base, the
 admin restrictions and the trained risk models (as raw bytes) are all rows here.
-Moving the deployment to another machine is therefore: install the code, point
-``DATABASE_URL`` at the same Postgres, start. Nothing is lost because nothing
-was local in the first place.
+Moving the deployment to another machine is therefore: install the code, copy
+``backend/var/spot5.db``, start. Nothing is lost because nothing was anywhere
+else in the first place.
 
 Second rule: **PAPER and REAL never mix.** Every execution table carries a
 ``mode`` column and every read filters on it, so switching modes cannot corrupt
 or overwrite the other mode's history.
 
-The column types are chosen to work on Postgres (production) *and* SQLite (the
-test suite), so the schema is exercised by tests without a live server.
+Column types are plain SQLAlchemy generics, so the same schema is what the
+tests exercise and what runs.
 """
 from __future__ import annotations
 
@@ -21,11 +21,9 @@ from datetime import datetime, timezone
 from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Index,
                         Integer, LargeBinary, String, Text, UniqueConstraint,
                         JSON, func)
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 
-# JSONB on Postgres, plain JSON on SQLite.
-JSONType = JSONB().with_variant(JSON(), "sqlite")
+JSONType = JSON()
 
 
 def utcnow() -> datetime:

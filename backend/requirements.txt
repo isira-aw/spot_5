@@ -2,8 +2,7 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
 pydantic>=2.5
-SQLAlchemy>=2.0
-psycopg2-binary>=2.9
+SQLAlchemy>=2.0             # the database is SQLite, from the standard library
 requests>=2.31
 python-dotenv>=1.0
 

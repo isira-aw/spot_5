@@ -1,30 +1,26 @@
-"""Postgres connection management built for a box that will lose its network.
+"""Database connection management. One SQLite file, no server, no network.
 
 Three things matter here and nothing else:
 
-* **Reconnects are automatic.** ``pool_pre_ping`` plus a bounded retry with
-  exponential backoff means a Railway restart or a dropped Wi-Fi link produces a
-  pause, not a crash.
+* **Contention is handled.** WAL plus ``busy_timeout`` lets the scheduler write
+  while the API reads, and a bounded retry with exponential backoff turns a
+  momentarily locked file into a pause rather than a crash.
 * **Writes are never silently lost.** :func:`session_scope` can spool a failed
   unit of work to a local JSONL outbox, which :func:`replay_outbox` drains once
-  the database answers again.
-* **Schema creation is idempotent.** ``init_db()`` is safe to run on every boot
-  from every instance.
+  the database accepts writes again.
+* **Schema creation is idempotent.** ``init_db()`` is safe to run on every boot.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
-import socket
-import struct
 import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator
-from urllib.parse import urlparse
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -45,24 +41,7 @@ RETRYABLE = (OperationalError, DBAPIError)
 
 
 # ── engine ───────────────────────────────────────────────────────────────────
-def _connect_args(url: str, connect_timeout_s: int | None = None) -> dict[str, Any]:
-    s = get_settings()
-    if url.startswith("sqlite"):
-        return {"check_same_thread": False}
-    args: dict[str, Any] = {
-        "connect_timeout": min(connect_timeout_s or s.db.connect_timeout_s,
-                               s.db.connect_timeout_s),
-        "application_name": f"spot5-{s.env}",
-    }
-    # Railway's managed Postgres speaks TLS; "prefer" keeps local dev working.
-    if s.db.sslmode:
-        args["sslmode"] = s.db.sslmode
-    if s.db.statement_timeout_ms:
-        args["options"] = f"-c statement_timeout={s.db.statement_timeout_ms}"
-    return args
-
-
-def _tune_sqlite(engine: Engine) -> None:
+def _tune_sqlite(engine: Engine, busy_timeout_ms: int) -> None:
     """Make the single file safe for the scheduler's background threads.
 
     Out of the box SQLite serialises everything and raises *database is locked*
@@ -72,21 +51,19 @@ def _tune_sqlite(engine: Engine) -> None:
     companion to WAL: durable across process crashes, which is the case that
     matters here.
     """
-    from sqlalchemy import event
-
     @event.listens_for(engine, "connect")
     def _pragmas(dbapi_conn, _record):                       # noqa: ANN001
         cur = dbapi_conn.cursor()
         try:
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA synchronous=NORMAL")
-            cur.execute("PRAGMA busy_timeout=10000")
+            cur.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
             cur.execute("PRAGMA foreign_keys=ON")
         finally:
             cur.close()
 
 
-def get_engine(connect_timeout_s: int | None = None) -> Engine:
+def get_engine() -> Engine:
     global _engine, _Session
     if _engine is not None:
         return _engine
@@ -94,24 +71,12 @@ def get_engine(connect_timeout_s: int | None = None) -> Engine:
         if _engine is not None:
             return _engine
         s = get_settings()
-        url = s.db.url
-        if not url:
-            from .config import database_hint
-            raise RuntimeError(f"No database configured: {database_hint()}")
-        kwargs: dict[str, Any] = {
-            "future": True,
-            "echo": s.db.echo,
-            "pool_pre_ping": True,
-            "connect_args": _connect_args(url, connect_timeout_s),
-        }
-        if not url.startswith("sqlite"):
-            kwargs.update(pool_size=s.db.pool_size, max_overflow=s.db.max_overflow,
-                          pool_recycle=s.db.pool_recycle_s, pool_timeout=30)
-        _engine = create_engine(url, **kwargs)
-        if url.startswith("sqlite"):
-            _tune_sqlite(_engine)
+        _engine = create_engine(s.db.url, future=True, echo=s.db.echo,
+                                pool_pre_ping=True,
+                                connect_args={"check_same_thread": False})
+        _tune_sqlite(_engine, s.db.busy_timeout_ms)
         _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
-        log.info("database engine ready: %s (from %s)", s.db.safe_url(), s.db.source)
+        log.info("database ready: %s (%s)", s.db.safe_url(), s.db.source)
         return _engine
 
 
@@ -186,7 +151,7 @@ def session_scope(*, spool_on_failure: dict[str, Any] | None = None) -> Iterator
 
 
 class DatabaseUnavailable(RuntimeError):
-    """Raised when a write could not reach Postgres and was spooled instead."""
+    """Raised when a write could not reach the database and was spooled instead."""
 
 
 # ── outbox ───────────────────────────────────────────────────────────────────
@@ -260,14 +225,11 @@ def init_db(create: bool = True) -> bool:
     return True
 
 
-def healthcheck(connect_timeout_s: int | None = None) -> dict[str, Any]:
-    """Ping the database. ``connect_timeout_s`` clips the per-connection timeout
-    for this call only — used by :func:`wait_for_db` to fit its remaining budget."""
+def healthcheck() -> dict[str, Any]:
+    """Ping the database."""
     started = time.perf_counter()
-    if connect_timeout_s is not None:
-        reset_engine()
     try:
-        with get_engine(connect_timeout_s=connect_timeout_s).connect() as conn:
+        with get_engine().connect() as conn:
             conn.execute(text("SELECT 1"))
         return {"ok": True, "latency_ms": round((time.perf_counter() - started) * 1000, 1),
                 "url": get_settings().db.safe_url(), "outbox": outbox_size()}
@@ -276,106 +238,35 @@ def healthcheck(connect_timeout_s: int | None = None) -> dict[str, Any]:
                 "url": get_settings().db.safe_url(), "outbox": outbox_size()}
 
 
-def probe_endpoint(timeout_s: float = 5.0) -> str:
-    """Say *where* the connection dies, below the driver.
-
-    ``connect_timeout expired`` is the same message whether DNS is wrong, the
-    port is shut, or the port answers but nothing behind it speaks Postgres —
-    and the third case is the one that looks like a working endpoint to
-    ``Test-NetConnection``, because a TCP proxy completes the handshake for
-    ports it has no service mapped to. So: resolve, connect, then send an 8-byte
-    SSLRequest and see whether a Postgres server is actually on the far end.
-    Read-only, no credentials sent, no bytes beyond the protocol preamble.
-    """
-    url = get_settings().db.url
-    if not url or url.startswith("sqlite"):
-        return ""
-    u = urlparse(url)
-    host, port = u.hostname, u.port or 5432
-    if not host:
-        return ""
-
-    try:
-        socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    except OSError as exc:
-        return f"DNS lookup for {host} failed ({exc.__class__.__name__}) — check the host in DATABASE_URL"
-
-    try:
-        sock = socket.create_connection((host, port), timeout=timeout_s)
-    except OSError as exc:
-        return (f"TCP connect to {host}:{port} failed ({exc.__class__.__name__}) — "
-                f"the port is closed or blocked upstream")
-
-    try:
-        sock.settimeout(timeout_s)
-        sock.sendall(struct.pack("!ii", 8, 80877103))       # postgres SSLRequest
-        reply = sock.recv(1)
-    except OSError:
-        return (f"TCP to {host}:{port} connects but the server never answers the Postgres "
-                f"handshake — that port is not mapped to the database (a proxy accepts the "
-                f"connection for any port). Re-copy DATABASE_URL from the Railway service's "
-                f"Connect tab; the public proxy port changes when the service is redeployed.")
-    finally:
-        try:
-            sock.close()
-        except OSError:                                     # pragma: no cover
-            pass
-
-    if reply in (b"S", b"N"):
-        return (f"{host}:{port} is a live Postgres endpoint — the handshake gets through, so "
-                f"the timeout is in authentication or TLS, not in reaching the server")
-    return f"{host}:{port} answered the Postgres handshake with {reply!r}, which is not a Postgres server"
-
-
 def wait_for_db(timeout_s: int = 120) -> bool:
-    """Block until Postgres answers or the timeout expires. Used at boot.
+    """Make sure the database is usable before boot continues.
 
-    Every failed attempt is logged with the driver's own error, and the last one
-    is kept in :func:`last_wait_error` so the caller can say *why* it gave up
-    instead of only that it did. Attempts are also budgeted: the per-connection
-    timeout is clipped to the time actually left, so a 30s wait makes several
-    attempts rather than two 15s ones, and the call returns at the deadline
-    instead of overshooting it by a whole backoff.
+    A local file is either openable or it is not, so there is nothing to wait
+    for in the common case — this returns on the first attempt. The retry loop
+    is kept for the one case that is genuinely transient: another process
+    holding the write lock while it checkpoints WAL. The last error is kept in
+    :func:`last_wait_error` so the caller can say *why* it gave up.
     """
     global _last_wait_error
     _last_wait_error = ""
-
-    # A missing URL is not a transient condition — waiting cannot fix it.
-    if not get_settings().db.url:
-        from .config import database_hint
-        _last_wait_error = database_hint()
-        log.error("no database configured: %s", _last_wait_error)
-        return False
-
-    deadline, delay, attempt = time.time() + timeout_s, 1.0, 0
+    deadline, delay, attempt = time.time() + timeout_s, 0.5, 0
     while True:
-        remaining = deadline - time.time()
-        if remaining <= 0:
-            break
         attempt += 1
-        result = healthcheck(connect_timeout_s=max(1, int(remaining)))
+        result = healthcheck()
         if result["ok"]:
             if attempt > 1:
                 log.info("database answered on attempt %d", attempt)
-            reset_engine()          # rebuild with the configured timeout, not the clipped one
             return True
         _last_wait_error = str(result.get("error", ""))
         remaining = deadline - time.time()
         if remaining <= 0:
             log.error("database not ready after %ds: %s", timeout_s, _last_wait_error)
-            break
+            return False
         pause = min(delay, remaining)
-        log.warning("database not ready (%s); retrying in %.0fs", _last_wait_error, pause)
+        log.warning("database not ready (%s); retrying in %.1fs", _last_wait_error, pause)
         reset_engine()
         time.sleep(pause)
-        delay = min(delay * 2, 15.0)
-
-    # Gave up. Probe once — cheap, and it turns "timeout expired" into a reason.
-    hint = probe_endpoint()
-    if hint:
-        log.error("endpoint probe: %s", hint)
-        _last_wait_error = f"{_last_wait_error} | {hint}" if _last_wait_error else hint
-    return False
+        delay = min(delay * 2, 5.0)
 
 
 def last_wait_error() -> str:

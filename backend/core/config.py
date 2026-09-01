@@ -1,22 +1,17 @@
 """Every tunable in one place, all of it environment-driven.
 
 Nothing in this system reads ``os.environ`` directly except this module. That is
-what makes moving the deployment to another machine a matter of copying one
-``.env`` file: the code carries no host-specific knowledge at all, and every
-piece of *state* lives in Postgres rather than on the local disk.
+what makes moving the deployment to another machine a matter of copying two
+things: this ``.env`` file and ``backend/var/spot5.db``.
 
-Precedence for the database URL, highest first:
-
-1. ``DATABASE_URL`` (Railway sets this for you),
-2. the discrete ``PGHOST``/``PGPORT``/``PGUSER``/``PGPASSWORD``/``PGDATABASE`` vars,
-3. ``POSTGRES_USER``/``POSTGRES_PASSWORD``/``POSTGRES_DB`` with a localhost host.
+The database needs no configuration. It is a SQLite file, created on first run;
+``DB_PATH`` moves it and ``DATABASE_URL`` overrides it with any SQLAlchemy URL.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Any
-from urllib.parse import quote_plus, urlparse, urlunparse
 
 try:                                          # optional convenience, never required
     from dotenv import load_dotenv
@@ -66,109 +61,25 @@ PAPER, REAL = "PAPER", "REAL"
 MODES = (PAPER, REAL)
 
 
-def normalize_db_url(url: str) -> str:
-    """SQLAlchemy 2 refuses the bare ``postgres://`` scheme Railway hands out.
-
-    Only Postgres URLs are rewritten, and only the scheme. Everything else is
-    returned untouched — a round trip through ``urlunparse`` silently rewrites
-    ``sqlite:///C:/x.db`` as ``sqlite:/C:/x.db`` (an empty netloc collapses the
-    slashes), which SQLAlchemy then refuses to parse at all.
-    """
-    if not url:
-        return ""
-    u = urlparse(url)
-    if u.scheme not in ("postgres", "postgresql"):
-        return url
-    return urlunparse(u._replace(scheme="postgresql+psycopg2"))
-
-
-INTERNAL_SUFFIX = ".railway.internal"
-
-
-def _on_railway() -> bool:
-    """True when this process is running *inside* the Railway network.
-
-    Railway injects these into every deployment and into nothing else, so their
-    presence is what decides whether the private hostname is usable.
-    """
-    return bool(_env("RAILWAY_ENVIRONMENT") or _env("RAILWAY_ENVIRONMENT_NAME")
-                or _env("RAILWAY_SERVICE_ID") or _env("RAILWAY_PROJECT_ID")
-                or _env("RAILWAY_PRIVATE_DOMAIN"))
-
-
-def _host_of(url: str) -> str:
-    try:
-        return (urlparse(url).hostname or "").lower()
-    except ValueError:
-        return ""
-
-
-def _is_internal(host: str) -> bool:
-    return host.endswith(INTERNAL_SUFFIX) or host == "postgres"
-
-
-def _sqlite_url() -> str:
-    """The zero-configuration default: one file under ``backend/var/``.
-
-    Nothing to install, nothing to fill in, no network in the path. Override the
-    location with ``DB_PATH`` if you want the file somewhere else.
-    """
-    path = _env("DB_PATH", os.path.join(BASE_DIR, "var", "spot5.db"))
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    return "sqlite:///" + os.path.abspath(path).replace("\\", "/")
+def db_path() -> str:
+    """Where the database file lives. ``DB_PATH`` moves it."""
+    return os.path.abspath(_env("DB_PATH", os.path.join(BASE_DIR, "var", "spot5.db")))
 
 
 def _resolve_database() -> tuple[str, str]:
-    """Pick the right URL for *where this process actually runs*.
+    """The database URL and a short label saying where it came from.
 
-    Railway hands out two URLs for one database and they are not
-    interchangeable:
-
-    * ``DATABASE_URL`` → ``postgres.railway.internal``, resolvable only from
-      inside the Railway network. Free, fast, no proxy in the path.
-    * ``DATABASE_PUBLIC_URL`` → ``<name>.proxy.rlwy.net:<port>``, the TCP proxy,
-      which is the only one a laptop can reach.
-
-    Preferring ``DATABASE_URL`` everywhere — as this used to — means a local run
-    tries to resolve a hostname that does not exist off-platform, which fails
-    slowly and confusingly rather than immediately. So: private first on
-    Railway, public first everywhere else, and an internal hostname is *never*
-    used off-platform even if it is the only thing configured.
-
-    Returns ``(url, source)`` — the source names which variable won, so the boot
-    log can say which of the two it dialled.
+    There is nothing to configure: a SQLite file under ``backend/var/`` is
+    created on first run. ``DATABASE_URL`` overrides it with any SQLAlchemy URL
+    for the cases that need one (the test suite points it at a temp file).
     """
-    on_rail = _on_railway()
-    order = ("DATABASE_URL", "DATABASE_PUBLIC_URL") if on_rail else \
-            ("DATABASE_PUBLIC_URL", "DATABASE_URL")
-
-    skipped_internal = False
-    for name in order:
-        raw = _env(name)
-        if not raw:
-            continue
-        if not on_rail and _is_internal(_host_of(raw)):
-            skipped_internal = True         # unreachable from here; try the next one
-            continue
-        return normalize_db_url(raw), name
-
-    # Discrete vars. Railway sets PGHOST to the internal host too, so it gets
-    # the same treatment; POSTGRES_* carry no host and default to localhost.
-    user = _env("PGUSER") or _env("POSTGRES_USER", "postgres")
-    password = _env("PGPASSWORD") or _env("POSTGRES_PASSWORD")
-    host = _env("PGHOST", "localhost")
-    port = _env("PGPORT", "5432")
-    database = _env("PGDATABASE") or _env("POSTGRES_DB", "railway")
-    # Nothing usable was configured: fall back to the local SQLite file rather
-    # than guessing at a Postgres on localhost, which would quietly connect to
-    # *a different database* and look like a success. Same when the only thing
-    # configured is Railway's private hostname, which cannot resolve from here.
-    if not on_rail and (skipped_internal or _is_internal(host)):
-        return _sqlite_url(), "SQLite (Railway's private hostname is unreachable from here)"
-    if not on_rail and not _env("PGHOST") and not password:
-        return _sqlite_url(), "SQLite (nothing configured)"
-    auth = f"{quote_plus(user)}:{quote_plus(password)}@" if password else f"{quote_plus(user)}@"
-    return f"postgresql+psycopg2://{auth}{host}:{port}/{database}", "PG* variables"
+    override = _env("DATABASE_URL")
+    if override:
+        return override, "DATABASE_URL"
+    path = db_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # Forward slashes: a backslash in a SQLAlchemy URL is not a path separator.
+    return "sqlite:///" + path.replace("\\", "/"), "SQLite (default)"
 
 
 def _database_url() -> str:
@@ -179,24 +90,11 @@ def _database_source() -> str:
     return _resolve_database()[1]
 
 
-def database_hint() -> str:
-    """Why there is no usable URL. Normally unreachable: resolution always ends
-    at the local SQLite file, so this only fires if that file cannot be created."""
-    if _database_url():
-        return ""
-    return f"could not create the SQLite file under {os.path.join(BASE_DIR, 'var')} — check permissions"
-
-
 @dataclass(frozen=True)
 class DatabaseSettings:
     url: str = field(default_factory=_database_url)
     source: str = field(default_factory=_database_source)
-    sslmode: str = field(default_factory=lambda: _env("PGSSLMODE", "prefer"))
-    pool_size: int = field(default_factory=lambda: _int("DB_POOL_SIZE", 5))
-    max_overflow: int = field(default_factory=lambda: _int("DB_MAX_OVERFLOW", 5))
-    pool_recycle_s: int = field(default_factory=lambda: _int("DB_POOL_RECYCLE_S", 900))
-    connect_timeout_s: int = field(default_factory=lambda: _int("DB_CONNECT_TIMEOUT_S", 15))
-    statement_timeout_ms: int = field(default_factory=lambda: _int("DB_STATEMENT_TIMEOUT_MS", 30_000))
+    busy_timeout_ms: int = field(default_factory=lambda: _int("DB_BUSY_TIMEOUT_MS", 10_000))
     connect_retries: int = field(default_factory=lambda: _int("DB_CONNECT_RETRIES", 5))
     echo: bool = field(default_factory=lambda: _flag("DB_ECHO"))
 
@@ -205,14 +103,9 @@ class DatabaseSettings:
         return bool(self.url)
 
     def safe_url(self) -> str:
-        """The URL with the password blanked — safe for logs and API responses."""
-        if not self.url:
-            return ""
-        u = urlparse(self.url)
-        if not u.password:              # nothing to hide, and see normalize_db_url:
-            return self.url             # urlunparse would mangle a sqlite:/// URL
-        netloc = u.netloc.replace(f":{u.password}@", ":***@")
-        return urlunparse(u._replace(netloc=netloc))
+        """The URL as shown in logs and API responses. A local file path holds no
+        credentials, so there is nothing to redact."""
+        return self.url
 
 
 @dataclass(frozen=True)

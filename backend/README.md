@@ -96,7 +96,7 @@ file. Three consequences:
 * edit the file → the next decision uses it, within `KB_REFRESH_SECONDS`;
 * a broken edit (no `##` headings) is **rejected** and the last good version keeps
   serving, with the parse error recorded;
-* every good version is written to Postgres content-addressed by SHA-256, so a
+* every good version is written to the database content-addressed by SHA-256, so a
   fresh host with no local file loads the knowledge base from the database.
 
 `POST /admin/knowledge-base` publishes a new version atomically (validate → write
@@ -114,7 +114,7 @@ Full detail in [`engine_3/README.md`](engine_3/README.md). In short:
 * **it trains itself on a schedule** (`ENGINE_3_TRAIN_INTERVAL_S`, default 6 h);
 * **it is gated** — a candidate must beat both the incumbent *and* the heuristic
   floor on a chronological holdout, or it is stored and never served;
-* **models live in Postgres as bytes** and load at start on any host;
+* **models live in the database as bytes** and load at start on any host;
 * **retention keeps the newest ten versions plus whatever is active**, pruned after
   each evaluation.
 
@@ -157,17 +157,17 @@ management.
 | an engine times out or crashes | flagged `ok=False`, or served from the last known-good reading marked `stale`; the Agent is told and discounts it |
 | the LLM is unreachable | deterministic policy produces the same answer shape |
 | the knowledge base is broken | last good version keeps serving; the error is recorded |
-| Postgres blips mid-write | the unit of work is spooled to a local JSONL outbox and replayed on reconnect (`replay_outbox`) |
-| Postgres is down at boot | the process waits for it instead of trading without its memory |
+| database blips mid-write | the unit of work is spooled to a local JSONL outbox and replayed on reconnect (`replay_outbox`) |
+| the database file cannot be opened at boot | the process stops instead of trading without its memory |
 | the price feed dies | three venues are tried, then the last good quote (if recent); if none, the cycle aborts without trading |
 | the process dies mid-cycle | client order ids are derived from the cycle id, so a replay finds the order and does not fill twice |
-| two hosts point at one database | a Postgres advisory lock elects one trader; the others serve the API in observer mode |
+| two hosts point at one database | an OS file lock elects one trader; the others serve the API in observer mode |
 
 ---
 
 ## Moving to another machine
 
-Everything that matters is a row in Postgres: ledgers, positions, trades, both
+Everything that matters is a row in the database: ledgers, positions, trades, both
 equity curves, the knowledge base, the admin restrictions, the trained risk models
 (as bytes) and the full decision audit trail. Local disk holds only caches.
 
@@ -246,7 +246,7 @@ are tested against each other rather than against mocks.
 
 ```
 backend/
-  core/          config, Postgres schema and access, contracts, market data, locks
+  core/          config, database schema and access, contracts, market data, locks
   adapters/      engine_1 and engine_2 normalized into one EngineSignal
   engine_1/      the context engine (unchanged)
   engine_2/      the quant engine (unchanged)

@@ -13,7 +13,7 @@ parsing fails, the old snapshot stays exactly where it is and the failure is
 logged and recorded — a broken edit degrades to "still using the last good
 version", never to an outage.
 
-**Portability.** Every version that loads successfully is written to Postgres,
+**Portability.** Every version that loads successfully is written to the database,
 content-addressed by SHA-256. A fresh machine with no local file loads the last
 active version straight from the database, so moving hosts does not lose the
 knowledge base.

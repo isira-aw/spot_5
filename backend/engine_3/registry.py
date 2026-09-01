@@ -1,6 +1,6 @@
 """Model storage that survives the machine.
 
-Trained risk models are bytes in a Postgres column, not files on a disk. Point a
+Trained risk models are bytes in a database column, not files on a disk. Point a
 new host at the same database and it loads the same model at boot, mid-cycle,
 with no export step and no shared volume.
 
@@ -54,7 +54,7 @@ def prune(keep: int | None = None) -> list[int]:
 
 
 def load_active() -> tuple[Any, dict]:
-    """The active model rebuilt from Postgres, or the heuristic floor."""
+    """The active model rebuilt from the database, or the heuristic floor."""
     try:
         row = repository.active_risk_model()
     except Exception as exc:
