@@ -34,7 +34,7 @@ from api.admin import router as admin_router                     # noqa: E402
 from api.routes import router as read_router                     # noqa: E402
 from core import repository                                      # noqa: E402
 from core.config import PAPER, get_settings                      # noqa: E402
-from core.db import init_db, wait_for_db                         # noqa: E402
+from core.db import connection_hint, init_db, wait_for_db       # noqa: E402
 from core.logging_setup import setup_logging                     # noqa: E402
 from engine_3.service import get_risk_engine                     # noqa: E402
 from execution import risk_guard                                 # noqa: E402
@@ -53,8 +53,10 @@ def boot(wait_seconds: int = 120) -> dict:
              settings.execution.mode, settings.execution.symbol, settings.env)
 
     if not wait_for_db(wait_seconds):
-        raise RuntimeError(f"database did not answer within {wait_seconds}s: "
-                           f"{settings.db.safe_url()}")
+        raise RuntimeError(
+            f"database did not answer within {wait_seconds}s.\n"
+            f"  url:  {settings.db.safe_url()}\n"
+            f"  why:  {connection_hint()}")
     init_db()
 
     problems = risk_guard.live_mode_preflight()

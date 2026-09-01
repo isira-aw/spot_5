@@ -77,14 +77,53 @@ def normalize_db_url(url: str) -> str:
     return urlunparse(u._replace(scheme=scheme))
 
 
+INTERNAL_HOST_SUFFIXES = (".railway.internal", ".internal")
+
+
+def is_internal_host(url: str) -> bool:
+    """True for a URL pointing at a private-network hostname."""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host.endswith(sfx) for sfx in INTERNAL_HOST_SUFFIXES)
+
+
+def running_inside_railway() -> bool:
+    return bool(_env("RAILWAY_ENVIRONMENT") or _env("RAILWAY_SERVICE_ID")
+                or _env("RAILWAY_PROJECT_ID"))
+
+
 def _database_url() -> str:
-    direct = _env("DATABASE_URL") or _env("DATABASE_PUBLIC_URL")
+    """Pick the URL that can actually be reached from where this process runs.
+
+    Railway hands out two: ``DATABASE_URL`` on a private ``*.railway.internal``
+    host, which only resolves inside Railway, and ``DATABASE_PUBLIC_URL`` on a
+    ``*.proxy.rlwy.net`` host, which works anywhere. Copying the whole variable
+    block to a laptop therefore produces a URL that can never connect, and the
+    only symptom is a connection timeout that looks like a dead database.
+
+    So: if the primary URL is an internal host and we are demonstrably *not*
+    inside Railway, the public URL wins when one is configured.
+    """
+    direct = _env("DATABASE_URL")
+    public = _env("DATABASE_PUBLIC_URL")
+
+    if direct and public and is_internal_host(direct) and not running_inside_railway():
+        return normalize_db_url(public)
     if direct:
         return normalize_db_url(direct)
+    if public:
+        return normalize_db_url(public)
 
     user = _env("PGUSER") or _env("POSTGRES_USER", "postgres")
     password = _env("PGPASSWORD") or _env("POSTGRES_PASSWORD")
     host = _env("PGHOST", "localhost")
+    if host.startswith("/") or "\\" in host:
+        # PGDATA (a server-side data directory) pasted into PGHOST. It is not a
+        # host and libpq would read it as a Unix socket directory, which on a
+        # developer machine cannot exist.
+        host = "localhost"
     port = _env("PGPORT", "5432")
     database = _env("PGDATABASE") or _env("POSTGRES_DB", "railway")
     auth = f"{quote_plus(user)}:{quote_plus(password)}@" if password else f"{quote_plus(user)}@"

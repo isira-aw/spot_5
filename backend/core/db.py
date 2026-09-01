@@ -26,7 +26,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from .config import BASE_DIR, get_settings
+from .config import BASE_DIR, get_settings, is_internal_host, running_inside_railway
 from .tables import Base
 
 log = logging.getLogger("core.db")
@@ -240,12 +240,47 @@ def healthcheck() -> dict[str, Any]:
                 "url": get_settings().db.safe_url(), "outbox": outbox_size()}
 
 
+def connection_hint(url: str | None = None) -> str:
+    """Turn "the database did not answer" into something actionable.
+
+    A connection timeout has half a dozen causes that look identical in the log,
+    and the most common one here — Railway's private hostname copied onto a
+    machine outside Railway — is invisible unless someone says it out loud.
+    """
+    url = url or get_settings().db.url
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+
+    if is_internal_host(url) and not running_inside_railway():
+        return (f"'{host}' is Railway's PRIVATE hostname: it only resolves from inside "
+                f"Railway, never from your machine. Use the public URL instead — in the "
+                f"Railway dashboard open the Postgres service, Variables tab, and copy "
+                f"DATABASE_PUBLIC_URL (host looks like xxx.proxy.rlwy.net with a high "
+                f"port). Set it as DATABASE_URL in backend/.env, or leave both and this "
+                f"process will pick the public one automatically when it is off-platform.")
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return ("nothing is listening on localhost:5432. Start a local Postgres, point "
+                "DATABASE_URL at a remote one, or use DATABASE_URL=sqlite:///./spot5.db "
+                "to try the system without a database server.")
+    if not host:
+        return ("no hostname could be parsed out of the connection URL. Check "
+                "DATABASE_URL in backend/.env — and note PGHOST wants a hostname, not "
+                "the PGDATA directory path.")
+    return (f"'{host}' did not answer. Check the port is reachable from this network, "
+            f"that the credentials are current, and that PGSSLMODE matches what the "
+            f"server expects (Railway needs 'require').")
+
+
 def wait_for_db(timeout_s: int = 120) -> bool:
     """Block until Postgres answers or the timeout expires. Used at boot."""
     deadline, delay = time.time() + timeout_s, 1.0
+    hinted = False
     while time.time() < deadline:
         if healthcheck()["ok"]:
             return True
+        if not hinted:
+            log.error("cannot reach the database: %s", connection_hint())
+            hinted = True
         log.warning("database not ready, retrying in %.0fs", delay)
         reset_engine()
         time.sleep(delay)

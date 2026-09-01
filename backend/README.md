@@ -201,6 +201,17 @@ The import is idempotent, so it can be re-run after an interruption.
 ```bash
 pip install -r backend/requirements.txt
 cp backend/.env.example backend/.env        # then edit
+```
+
+**On the database URL.** Railway publishes two, and only one of them works from
+your own machine: `DATABASE_URL` uses a `*.railway.internal` host that resolves
+only inside Railway, while `DATABASE_PUBLIC_URL` uses `*.proxy.rlwy.net` and works
+anywhere. Copying the whole variable block to a laptop gives you a URL that can
+never connect and a timeout that looks like a dead database. Set the public one
+locally; if both are present, the process picks the public one automatically
+whenever it is not running inside Railway, and says so if it still cannot connect.
+
+```bash
 
 python backend/main.py --check              # boot checks: db, kb, risk model, mode
 python backend/main.py --once --no-trade    # one full cycle, decide but do not execute
