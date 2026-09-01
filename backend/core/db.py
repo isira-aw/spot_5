@@ -35,18 +35,20 @@ _engine: Engine | None = None
 _Session: sessionmaker | None = None
 _lock = threading.Lock()
 _initialized = False
+_last_wait_error = ""
 
 OUTBOX_PATH = os.environ.get("DB_OUTBOX_PATH", os.path.join(BASE_DIR, "var", "outbox.jsonl"))
 RETRYABLE = (OperationalError, DBAPIError)
 
 
 # ── engine ───────────────────────────────────────────────────────────────────
-def _connect_args(url: str) -> dict[str, Any]:
+def _connect_args(url: str, connect_timeout_s: int | None = None) -> dict[str, Any]:
     s = get_settings()
     if url.startswith("sqlite"):
         return {"check_same_thread": False}
     args: dict[str, Any] = {
-        "connect_timeout": s.db.connect_timeout_s,
+        "connect_timeout": min(connect_timeout_s or s.db.connect_timeout_s,
+                               s.db.connect_timeout_s),
         "application_name": f"spot5-{s.env}",
     }
     # Railway's managed Postgres speaks TLS; "prefer" keeps local dev working.
@@ -57,7 +59,7 @@ def _connect_args(url: str) -> dict[str, Any]:
     return args
 
 
-def get_engine() -> Engine:
+def get_engine(connect_timeout_s: int | None = None) -> Engine:
     global _engine, _Session
     if _engine is not None:
         return _engine
@@ -72,7 +74,7 @@ def get_engine() -> Engine:
             "future": True,
             "echo": s.db.echo,
             "pool_pre_ping": True,
-            "connect_args": _connect_args(url),
+            "connect_args": _connect_args(url, connect_timeout_s),
         }
         if not url.startswith("sqlite"):
             kwargs.update(pool_size=s.db.pool_size, max_overflow=s.db.max_overflow,
@@ -228,10 +230,14 @@ def init_db(create: bool = True) -> bool:
     return True
 
 
-def healthcheck() -> dict[str, Any]:
+def healthcheck(connect_timeout_s: int | None = None) -> dict[str, Any]:
+    """Ping the database. ``connect_timeout_s`` clips the per-connection timeout
+    for this call only — used by :func:`wait_for_db` to fit its remaining budget."""
     started = time.perf_counter()
+    if connect_timeout_s is not None:
+        reset_engine()
     try:
-        with get_engine().connect() as conn:
+        with get_engine(connect_timeout_s=connect_timeout_s).connect() as conn:
             conn.execute(text("SELECT 1"))
         return {"ok": True, "latency_ms": round((time.perf_counter() - started) * 1000, 1),
                 "url": get_settings().db.safe_url(), "outbox": outbox_size()}
@@ -241,13 +247,42 @@ def healthcheck() -> dict[str, Any]:
 
 
 def wait_for_db(timeout_s: int = 120) -> bool:
-    """Block until Postgres answers or the timeout expires. Used at boot."""
-    deadline, delay = time.time() + timeout_s, 1.0
-    while time.time() < deadline:
-        if healthcheck()["ok"]:
+    """Block until Postgres answers or the timeout expires. Used at boot.
+
+    Every failed attempt is logged with the driver's own error, and the last one
+    is kept in :func:`last_wait_error` so the caller can say *why* it gave up
+    instead of only that it did. Attempts are also budgeted: the per-connection
+    timeout is clipped to the time actually left, so a 30s wait makes several
+    attempts rather than two 15s ones, and the call returns at the deadline
+    instead of overshooting it by a whole backoff.
+    """
+    global _last_wait_error
+    _last_wait_error = ""
+    deadline, delay, attempt = time.time() + timeout_s, 1.0, 0
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        attempt += 1
+        result = healthcheck(connect_timeout_s=max(1, int(remaining)))
+        if result["ok"]:
+            if attempt > 1:
+                log.info("database answered on attempt %d", attempt)
+            reset_engine()          # rebuild with the configured timeout, not the clipped one
             return True
-        log.warning("database not ready, retrying in %.0fs", delay)
+        _last_wait_error = str(result.get("error", ""))
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            log.error("database not ready after %ds: %s", timeout_s, _last_wait_error)
+            break
+        pause = min(delay, remaining)
+        log.warning("database not ready (%s); retrying in %.0fs", _last_wait_error, pause)
         reset_engine()
-        time.sleep(delay)
+        time.sleep(pause)
         delay = min(delay * 2, 15.0)
     return False
+
+
+def last_wait_error() -> str:
+    """The last error :func:`wait_for_db` saw, for the caller's own message."""
+    return _last_wait_error
