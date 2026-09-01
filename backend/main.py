@@ -53,10 +53,13 @@ def boot(wait_seconds: int = 120) -> dict:
              settings.execution.mode, settings.execution.symbol, settings.env)
 
     if not wait_for_db(wait_seconds):
+        from core.db import healthcheck
+        driver_error = healthcheck().get("error", "")
         raise RuntimeError(
             f"database did not answer within {wait_seconds}s.\n"
-            f"  url:  {settings.db.safe_url()}\n"
-            f"  why:  {connection_hint()}")
+            f"  url:    {settings.db.safe_url()}\n"
+            f"  driver: {driver_error}\n"
+            f"  why:    {connection_hint(driver_error=driver_error)}")
     init_db()
 
     problems = risk_guard.live_mode_preflight()

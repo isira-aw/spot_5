@@ -240,35 +240,89 @@ def healthcheck() -> dict[str, Any]:
                 "url": get_settings().db.safe_url(), "outbox": outbox_size()}
 
 
-def connection_hint(url: str | None = None) -> str:
+def probe_host(host: str, port: int, timeout: float = 5.0) -> tuple[str, str]:
+    """-> (verdict, detail). Separates "wrong name" from "unreachable port".
+
+    A DNS failure and a refused connection produce the same "did not answer" in a
+    connection pool, but they have completely different fixes, so they are worth
+    telling apart before guessing.
+    """
+    import socket
+    try:
+        addrs = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        return "dns_failed", str(exc)
+    ip = addrs[0][4][0]
+    sock = socket.socket(addrs[0][0], socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(addrs[0][4])
+        return "open", ip
+    except socket.timeout:
+        return "timeout", ip
+    except OSError as exc:
+        return "refused", f"{ip}: {exc}"
+    finally:
+        sock.close()
+
+
+def connection_hint(url: str | None = None, driver_error: str = "") -> str:
     """Turn "the database did not answer" into something actionable.
 
     A connection timeout has half a dozen causes that look identical in the log,
-    and the most common one here — Railway's private hostname copied onto a
-    machine outside Railway — is invisible unless someone says it out loud.
+    so this probes DNS and TCP directly and names the one that actually applies.
     """
     url = url or get_settings().db.url
     from urllib.parse import urlparse
-    host = (urlparse(url).hostname or "").lower()
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    port = parsed.port or 5432
+
+    if url.startswith("sqlite"):
+        return f"sqlite file at {parsed.path or url} could not be opened."
+    if not host:
+        return ("no hostname could be parsed out of the connection URL. Check "
+                "DATABASE_URL in backend/.env — and note PGHOST wants a hostname, not "
+                "the PGDATA directory path.")
 
     if is_internal_host(url) and not running_inside_railway():
         return (f"'{host}' is Railway's PRIVATE hostname: it only resolves from inside "
                 f"Railway, never from your machine. Use the public URL instead — in the "
                 f"Railway dashboard open the Postgres service, Variables tab, and copy "
-                f"DATABASE_PUBLIC_URL (host looks like xxx.proxy.rlwy.net with a high "
+                f"DATABASE_PUBLIC_URL (host looks like <name>.proxy.rlwy.net with a high "
                 f"port). Set it as DATABASE_URL in backend/.env, or leave both and this "
                 f"process will pick the public one automatically when it is off-platform.")
-    if host in ("localhost", "127.0.0.1", "::1"):
-        return ("nothing is listening on localhost:5432. Start a local Postgres, point "
-                "DATABASE_URL at a remote one, or use DATABASE_URL=sqlite:///./spot5.db "
-                "to try the system without a database server.")
-    if not host:
-        return ("no hostname could be parsed out of the connection URL. Check "
-                "DATABASE_URL in backend/.env — and note PGHOST wants a hostname, not "
-                "the PGDATA directory path.")
-    return (f"'{host}' did not answer. Check the port is reachable from this network, "
-            f"that the credentials are current, and that PGSSLMODE matches what the "
-            f"server expects (Railway needs 'require').")
+
+    verdict, detail = probe_host(host, port)
+
+    if verdict == "dns_failed":
+        extra = ""
+        if host.endswith(".proxy.rlwy.net"):
+            extra = (" Railway's proxy hostnames are randomly assigned railway words "
+                     "(monorail, shortline, viaduct, roundhouse, junction...) — copy the "
+                     "exact host AND port out of DATABASE_PUBLIC_URL in the Railway "
+                     "dashboard rather than typing one that looks plausible.")
+        return (f"'{host}' does not resolve — this hostname does not exist ({detail})."
+                f"{extra}")
+    if verdict == "refused":
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return (f"nothing is listening on {host}:{port}. Start a local Postgres, point "
+                    f"DATABASE_URL at a remote one, or use DATABASE_URL=sqlite:///./spot5.db "
+                    f"to try the system without a database server.")
+        return (f"'{host}' resolves but nothing accepted a connection on port {port} "
+                f"({detail}). Check the port matches the one the provider shows — for "
+                f"Railway the public port is a random high port, never 5432 — and that "
+                f"TCP proxying is enabled for the service.")
+    if verdict == "timeout":
+        return (f"'{host}' ({detail}) resolves but port {port} did not respond in time. "
+                f"Usually a firewall, VPN or corporate network blocking outbound traffic "
+                f"on a non-standard port.")
+
+    # The socket opened, so this is Postgres itself refusing: credentials, TLS or database.
+    detail = driver_error or ("Check the username, password and database name, and that "
+                              "PGSSLMODE=require matches what the server expects.")
+    return (f"'{host}:{port}' is reachable, so the network is fine and Postgres itself "
+            f"rejected the connection. {detail}")
 
 
 def wait_for_db(timeout_s: int = 120) -> bool:
@@ -276,13 +330,33 @@ def wait_for_db(timeout_s: int = 120) -> bool:
     deadline, delay = time.time() + timeout_s, 1.0
     hinted = False
     while time.time() < deadline:
-        if healthcheck()["ok"]:
+        health = healthcheck()
+        if health["ok"]:
             return True
         if not hinted:
-            log.error("cannot reach the database: %s", connection_hint())
+            log.error("database error: %s", health.get("error", "unknown"))
+            log.error("diagnosis: %s", connection_hint(driver_error=health.get("error", "")))
             hinted = True
         log.warning("database not ready, retrying in %.0fs", delay)
         reset_engine()
         time.sleep(delay)
         delay = min(delay * 2, 15.0)
     return False
+
+
+if __name__ == "__main__":                                        # pragma: no cover
+    # A five-second connection diagnosis, without booting the rest of the system:
+    #     python -m core.db
+    from .logging_setup import setup_logging
+
+    setup_logging()
+    settings = get_settings()
+    health = healthcheck()
+    print(json.dumps({
+        "url": settings.db.safe_url(),
+        "reachable": health["ok"],
+        "driver_error": health.get("error"),
+        "diagnosis": "connected" if health["ok"] else connection_hint(
+            driver_error=health.get("error", "")),
+    }, indent=2))
+    raise SystemExit(0 if health["ok"] else 1)

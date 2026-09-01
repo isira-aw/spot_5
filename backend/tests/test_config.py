@@ -1,5 +1,4 @@
 """Connection resolution — the part everyone gets wrong on the first deploy."""
-import pytest
 
 
 def _settings(monkeypatch, **env):
@@ -56,12 +55,59 @@ def test_the_password_never_appears_in_the_safe_url(monkeypatch):
     assert "pw" not in s.db.safe_url() and "***" in s.db.safe_url()
 
 
-@pytest.mark.parametrize("url,expected", [
-    (INTERNAL, "PRIVATE hostname"),
-    ("postgresql://u:p@localhost:5432/db", "nothing is listening"),
-    (PUBLIC, "did not answer"),
-])
-def test_the_connection_hint_names_the_actual_problem(monkeypatch, url, expected):
-    _settings(monkeypatch, DATABASE_URL=url)
-    from core.db import connection_hint
-    assert expected in connection_hint()
+def test_an_internal_host_is_diagnosed_without_touching_the_network(monkeypatch):
+    """The private-hostname case is decided from the URL alone — no DNS needed."""
+    import core.db as db
+    _settings(monkeypatch, DATABASE_URL=INTERNAL)
+
+    def explode(*args, **kwargs):
+        raise AssertionError("probe_host must not be called for an internal host")
+
+    monkeypatch.setattr(db, "probe_host", explode)
+    assert "PRIVATE hostname" in db.connection_hint()
+
+
+def test_a_sqlite_url_is_not_diagnosed_as_a_network_problem(monkeypatch):
+    import core.db as db
+    _settings(monkeypatch, DATABASE_URL="sqlite:///./spot5.db")
+    assert "sqlite" in db.connection_hint().lower()
+
+
+def test_a_url_with_no_host_names_the_pgdata_mistake(monkeypatch):
+    import core.db as db
+    _settings(monkeypatch, DATABASE_URL="postgresql:///railway")
+    assert "PGDATA" in db.connection_hint()
+
+
+def test_the_hint_distinguishes_a_bad_hostname_from_a_blocked_port(monkeypatch):
+    """DNS failure and connection refused look identical in a pool, not here."""
+    import core.db as db
+    _settings(monkeypatch, DATABASE_URL="postgresql://u:p@nope.proxy.rlwy.net:41234/railway")
+
+    monkeypatch.setattr(db, "probe_host", lambda h, p, timeout=5.0: ("dns_failed", "no such host"))
+    hint = db.connection_hint()
+    assert "does not resolve" in hint and "randomly assigned railway words" in hint
+
+    monkeypatch.setattr(db, "probe_host", lambda h, p, timeout=5.0: ("refused", "1.2.3.4: refused"))
+    assert "nothing accepted a connection on port 41234" in db.connection_hint()
+
+    monkeypatch.setattr(db, "probe_host", lambda h, p, timeout=5.0: ("timeout", "1.2.3.4"))
+    assert "firewall" in db.connection_hint()
+
+    monkeypatch.setattr(db, "probe_host", lambda h, p, timeout=5.0: ("open", "1.2.3.4"))
+    hint = db.connection_hint(driver_error="FATAL: password authentication failed")
+    assert "network is fine" in hint and "password authentication failed" in hint
+
+
+def test_a_dead_localhost_suggests_sqlite_rather_than_railway_advice(monkeypatch):
+    import core.db as db
+    _settings(monkeypatch, DATABASE_URL="postgresql://u:p@localhost:5432/db")
+    monkeypatch.setattr(db, "probe_host", lambda h, p, timeout=5.0: ("refused", "127.0.0.1"))
+    hint = db.connection_hint()
+    assert "sqlite:///./spot5.db" in hint and "Railway" not in hint
+
+
+def test_probe_host_reports_dns_failure_without_raising(monkeypatch):
+    from core.db import probe_host
+    verdict, detail = probe_host("this-host-does-not-exist.invalid", 5432, timeout=1.0)
+    assert verdict == "dns_failed" and detail

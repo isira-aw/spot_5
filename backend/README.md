@@ -201,6 +201,8 @@ The import is idempotent, so it can be re-run after an interruption.
 ```bash
 pip install -r backend/requirements.txt
 cp backend/.env.example backend/.env        # then edit
+
+cd backend && python -m core.db             # five-second connection diagnosis
 ```
 
 **On the database URL.** Railway publishes two, and only one of them works from
