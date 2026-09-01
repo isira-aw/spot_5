@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# secrets and local state
+.env
+backend/.env
+backend/var/
+*.db
+*.sqlite3
+
+# engine artefacts: models live in Postgres, these are local caches
+backend/engine_2/models/
+backend/engine_2/models_candidate/
+backend/engine_2/models_prev/
+backend/engine_2/data/
+backend/engine_2/reports/
+backend/engine_1/*.json
