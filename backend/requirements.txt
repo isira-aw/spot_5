@@ -1,0 +1,22 @@
+# ── core platform ────────────────────────────────────────────────────────────
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+requests>=2.31
+python-dotenv>=1.0
+
+# ── engine_3 (risk model) ────────────────────────────────────────────────────
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3
+joblib>=1.3
+
+# ── optional, per component ──────────────────────────────────────────────────
+# engine_2 in-process inference (not needed when ENGINE_2_SOURCE=file):
+#   tensorflow>=2.15
+# REAL mode order placement:
+#   ccxt>=4.2
+# tests:
+#   pytest>=8.0
