@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Tokens. Every colour in the application is defined here and nowhere else.
+   Light is the base; the dark set is redefined for the OS preference and for an
+   explicit choice, so the un-stamped (system) state resolves correctly too.
+   ──────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --color-bg: #f2f3f2;
+  --color-surface: #fbfbfa;
+  --color-sunken: #eaecea;
+  --color-rail: #e7e7e4;
+  --color-line: #dddfdc;
+  --color-line-strong: #c6c9c5;
+  --color-ink: #14181a;
+  --color-ink-2: #3d4448;
+  --color-ink-3: #586059;
+  --color-ink-4: #636c67;
+  --color-accent: #3b4fa8;
+  --color-accent-soft: #e3e6f4;
+  --color-accent-ink: #2c3c86;
+  --color-gain: #186a49;
+  --color-gain-soft: #e0efe7;
+  --color-loss: #a63625;
+  --color-loss-soft: #f6e4e0;
+  --color-warn: #7a560d;
+  --color-warn-soft: #f5ebd6;
+  --color-hazard: #a83809;
+  --color-hazard-soft: #fbe7dc;
+
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-prose: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-r1: 2px;
+  --radius-r2: 4px;
+  --radius-r3: 8px;
+
+  --ease-desk: cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+
+:root {
+  --shadow-lift: 0 1px 2px rgb(20 24 26 / 0.05), 0 8px 24px -18px rgb(20 24 26 / 0.35);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #101312;
+    --color-surface: #171b1b;
+    --color-sunken: #0b0e0e;
+    --color-rail: #141817;
+    --color-line: #252a29;
+    --color-line-strong: #39403e;
+    --color-ink: #e8ecea;
+    --color-ink-2: #b6beba;
+    --color-ink-3: #8a938f;
+    --color-ink-4: #7e8883;
+    --color-accent: #8ea0f0;
+    --color-accent-soft: #1d2340;
+    --color-accent-ink: #afbbf7;
+    --color-gain: #4fbf8d;
+    --color-gain-soft: #12291f;
+    --color-loss: #e4735f;
+    --color-loss-soft: #2e1613;
+    --color-warn: #d6a548;
+    --color-warn-soft: #2a2011;
+    --color-hazard: #f0703a;
+    --color-hazard-soft: #31170c;
+    --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.5), 0 10px 30px -20px rgb(0 0 0 / 0.9);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #101312;
+  --color-surface: #171b1b;
+  --color-sunken: #0b0e0e;
+  --color-rail: #141817;
+  --color-line: #252a29;
+  --color-line-strong: #39403e;
+  --color-ink: #e8ecea;
+  --color-ink-2: #b6beba;
+  --color-ink-3: #8a938f;
+  --color-ink-4: #7e8883;
+  --color-accent: #8ea0f0;
+  --color-accent-soft: #1d2340;
+  --color-accent-ink: #afbbf7;
+  --color-gain: #4fbf8d;
+  --color-gain-soft: #12291f;
+  --color-loss: #e4735f;
+  --color-loss-soft: #2e1613;
+  --color-warn: #d6a548;
+  --color-warn-soft: #2a2011;
+  --color-hazard: #f0703a;
+  --color-hazard-soft: #31170c;
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.5), 0 10px 30px -20px rgb(0 0 0 / 0.9);
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Digits never change width, so a value update cannot move anything. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-r1);
+}
+
+.shadow-lift {
+  box-shadow: var(--shadow-lift);
+}
+
+@keyframes desk-breathe {
+  0% { opacity: 0.9; transform: scale(0.8); }
+  70% { opacity: 0; transform: scale(1.5); }
+  100% { opacity: 0; }
+}
+@keyframes desk-shimmer {
+  to { background-position: -200% 0; }
+}
+.breathe::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1px solid currentColor;
+  animation: desk-breathe 2.4s var(--ease-desk) infinite;
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--color-sunken), var(--color-line), var(--color-sunken));
+  background-size: 200% 100%;
+  animation: desk-shimmer 1.4s linear infinite;
+  color: transparent;
+  border-radius: var(--radius-r1);
+}
+
+/* The hazard stripe that marks REAL money, and nothing else. */
+.hazard-band {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--color-hazard) 0 8px,
+    transparent 8px 16px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .breathe::after { display: none; }
+}
