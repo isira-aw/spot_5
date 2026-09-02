@@ -7,6 +7,7 @@ The half that needs a GPU is checked by the gates themselves at training time.
 from __future__ import annotations
 
 import json
+import os
 
 import numpy as np
 import pytest
@@ -344,6 +345,38 @@ def test_incomplete_bundle_is_not_registerable(registry, tmp_path):
         fh.write("only half a bundle")
     with pytest.raises(FileNotFoundError):
         registry.register(str(tmp_path / "broken"))
+
+
+# ── cold start: no model trained yet ─────────────────────────────────────────
+def test_untrained_engine_2_says_so_plainly(tmp_path, monkeypatch):
+    """Before the first training cycle there is no bundle, and the operator needs
+    to be told that — not handed a Keras 'not an accessible .keras zip file'."""
+    monkeypatch.setenv("ENGINE_2_MODELS_DIR", str(tmp_path / "never_trained"))
+    from adapters.engine_two import EngineTwoAdapter
+
+    adapter = EngineTwoAdapter(enabled=True)
+    adapter.models_dir = str(tmp_path / "never_trained")
+    reason = adapter._cold_start_reason()
+    assert reason and "engine_2.jobs cycle" in reason
+    with pytest.raises(FileNotFoundError, match="no promoted model"):
+        adapter._get_runner()
+
+    # and once a bundle is there, the cold-start check gets out of the way
+    (tmp_path / "never_trained" / "forecaster").mkdir(parents=True)
+    (tmp_path / "never_trained" / "forecaster" / "model.keras").write_text("bundle")
+    assert adapter._cold_start_reason() is None
+
+
+def test_relative_model_paths_are_anchored_to_the_repo(monkeypatch):
+    """The same .env must work whatever directory the API was started from."""
+    import importlib
+
+    from core import config as core_config
+    monkeypatch.setenv("ENGINE_2_MODELS_DIR", "backend/engine_2/models")
+    settings = importlib.reload(core_config).get_settings(refresh=True)
+    resolved = settings.engines.engine_2_models_dir
+    assert os.path.isabs(resolved)
+    assert resolved.replace("\\", "/").endswith("backend/engine_2/models")
 
 
 # ── the hard constraint ──────────────────────────────────────────────────────

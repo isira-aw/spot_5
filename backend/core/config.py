@@ -54,6 +54,20 @@ def _csv(name: str, default: str = "") -> list[str]:
     return [p.strip() for p in _env(name, default).split(",") if p.strip()]
 
 
+def _path(name: str, default: str) -> str:
+    """A filesystem path from the environment, always absolute.
+
+    Paths in ``.env.example`` are written relative to the repository root
+    (``backend/engine_2/models``) because that is what reads well in a config
+    file. Used verbatim they would resolve against the process working
+    directory, so the same ``.env`` works when the API is started from the repo
+    root and silently points at a non-existent directory when it is started from
+    ``backend/`` or as a service. Anchor them to REPO_DIR instead.
+    """
+    raw = _env(name, default)
+    return raw if os.path.isabs(raw) else os.path.abspath(os.path.join(REPO_DIR, raw))
+
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # backend/
 REPO_DIR = os.path.dirname(BASE_DIR)
 
@@ -179,7 +193,7 @@ class EngineSettings:
     engine_2_timeout_s: int = field(default_factory=lambda: _int("ENGINE_2_TIMEOUT_S", 120))
     engine_1_pair: str = field(default_factory=lambda: _env("ENGINE_1_PAIR", "XBTUSDT"))
     engine_1_cache_s: int = field(default_factory=lambda: _int("ENGINE_1_CACHE_S", 240))
-    engine_2_models_dir: str = field(default_factory=lambda: _env(
+    engine_2_models_dir: str = field(default_factory=lambda: _path(
         "ENGINE_2_MODELS_DIR", os.path.join(BASE_DIR, "engine_2", "models")))
     engine_2_cache_s: int = field(default_factory=lambda: _int("ENGINE_2_CACHE_S", 60))
     # engine_2 owns its own training cadence: retraining a CNN-BiLSTM + PPO is

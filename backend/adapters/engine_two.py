@@ -28,7 +28,7 @@ import os
 import sys
 import time
 
-from core.config import BASE_DIR, get_settings
+from core.config import BASE_DIR, REPO_DIR, get_settings
 from core.contracts import BUY, DOWN, HOLD, NEUTRAL, SELL, UP, EngineSignal, utcnow
 
 from .base import EngineAdapter
@@ -39,8 +39,12 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 SOURCE = os.environ.get("ENGINE_2_SOURCE", "auto").strip().lower()   # auto|inline|file
-DECISION_LOG = os.environ.get(
+_DECISION_LOG_RAW = os.environ.get(
     "ENGINE_2_DECISION_LOG", os.path.join(BASE_DIR, "engine_2", "reports", "live_decisions.jsonl"))
+# Config paths are written repo-root-relative; resolve them so the same .env
+# works whatever directory the API was started from.
+DECISION_LOG = (_DECISION_LOG_RAW if os.path.isabs(_DECISION_LOG_RAW)
+                else os.path.abspath(os.path.join(REPO_DIR, _DECISION_LOG_RAW)))
 MAX_FILE_AGE_S = int(os.environ.get("ENGINE_2_MAX_FILE_AGE_S", "3600"))
 
 ACTION_TO_DIRECTION = {BUY: UP, SELL: DOWN, HOLD: NEUTRAL}
@@ -59,9 +63,29 @@ class EngineTwoAdapter(EngineAdapter):
         self._runner_error: str | None = None
 
     # ── inline ──────────────────────────────────────────────────────────────
+    def _cold_start_reason(self) -> str | None:
+        """engine_2 has no model until its training cycle has produced one.
+
+        Worth naming explicitly: the raw failure is a Keras "not an accessible
+        .keras zip file", which reads like corruption rather than "this has never
+        been trained here".
+        """
+        bundle = os.path.join(self.models_dir, "forecaster", "model.keras")
+        if os.path.exists(bundle):
+            return None
+        if not os.path.isdir(self.models_dir):
+            return (f"no promoted model: {self.models_dir} does not exist. "
+                    f"Run `python -m engine_2.jobs cycle` to train and promote one, "
+                    f"or point ENGINE_2_MODELS_DIR at an existing bundle.")
+        return (f"no promoted model in {self.models_dir} (nothing has passed the "
+                f"gates yet). Run `python -m engine_2.jobs cycle`.")
+
     def _get_runner(self):
         if self._runner is not None:
             return self._runner
+        cold = self._cold_start_reason()
+        if cold:
+            raise FileNotFoundError(cold)
         from engine_2.inference import Runner            # imports TF lazily
         self._runner = Runner(models_dir=self.models_dir,
                               symbol=get_settings().execution.symbol)
