@@ -7,7 +7,12 @@ model, and asks the actor for an action. It never trains, never blocks on the
 retrain job, and hot-reloads models only when their mtime changes — so a
 promotion takes effect on the next bar without a restart.
 
-    python -m trader.inference --paper
+Every decision is also fed to `drift.observe`, which matches it against what
+the market actually did HORIZON bars later and keeps a rolling scorecard of live
+directionalAccuracy / predStd. That is the only measurement that can tell you the
+model has decayed since it was promoted.
+
+    python -m engine_2.inference --paper
 """
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ import numpy as np
 
 from . import config as C
 from .features import build_features, realized_volatility
+from . import drift, registry
 from .fetch import fetch_live_window, _exchange
 
 ACTIONS = ["HOLD", "BUY", "SELL"]
@@ -50,8 +56,11 @@ class Runner:
         s = np.load(f"{self.models_dir}/scaler.npz")
         self.mu, self.sd = s["mean"], s["std"]
         self.assemble_state = M.assemble_state
+        self.horizon_agreement = M.horizon_agreement
+        self.model_version = registry.current_version()
         self._stamp = self._mtimes()
-        print(f"[{time.strftime('%H:%M:%S')}] models loaded from {self.models_dir}")
+        print(f"[{time.strftime('%H:%M:%S')}] models loaded from {self.models_dir} "
+              f"(version {self.model_version or 'unversioned'})")
 
     def _maybe_reload(self):
         if self._mtimes() != self._stamp:
@@ -81,11 +90,27 @@ class Runner:
         if self.position == 1 and (pnl <= -C.STOP_LOSS_PCT or pnl >= C.TAKE_PROFIT_PCT):
             action = 2
 
+        # Score the previous predictions that have now matured, and file this one.
+        # Never let monitoring take the decision loop down with it.
+        drift_status = {}
+        try:
+            drift_status = drift.observe(int(candles[i, 0]), close,
+                                         [float(p) for p in forecast],
+                                         self.model_version)
+        except Exception as exc:
+            print(f"drift monitor unavailable: {type(exc).__name__}: {exc}")
+
         return {"ts": int(candles[i, 0]), "close": close, "action": ACTIONS[action],
                 "action_id": action, "probs": [round(float(p), 4) for p in probs],
                 "p_up": [round(float(p), 4) for p in forecast],
+                "horizon_agreement": self.horizon_agreement(forecast),
                 "position": self.position, "pnl": round(pnl, 5),
-                "bars_in": self.bars_in, "volatility": round(vol, 6)}
+                "bars_in": self.bars_in, "volatility": round(vol, 6),
+                "slippage_assumed": round(float(C.slippage_for_vol(vol)), 6),
+                "model_version": self.model_version,
+                "drift": {k: drift_status.get(k) for k in
+                          ("verdict", "dir_acc", "pred_std", "n",
+                           "retrain_recommended")} if drift_status else None}
 
     def apply(self, d: dict):
         """Paper-trade bookkeeping. Swap for real order placement when live."""

@@ -130,6 +130,25 @@ def risk_models(limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
             "retention": get_settings().engines.engine_3_retention}
 
 
+@router.get("/engine2/models", summary="Forecaster/PPO bundle versions, newest first")
+def engine_two_models(limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+    """What engine_2 is serving, what it could roll back to, and whether the live
+    model has decayed since it was promoted."""
+    try:
+        from engine_2 import config as C2, drift, registry
+    except Exception as exc:                       # engine_2 not installed here
+        return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        drift_status = drift.status()
+    except Exception as exc:
+        drift_status = {"error": f"{type(exc).__name__}: {exc}"}
+    return {"available": True, "current": registry.current_info(),
+            "history": [{k: v for k, v in row.items() if k != "path"}
+                        for row in registry.list_versions()[:limit]],
+            "retention": C2.MODEL_RETENTION, "drift": drift_status,
+            "last_cycle": repository.get_state("engine_2_last_cycle")}
+
+
 @router.get("/admin/rules", summary="Active operator restrictions (read-only)")
 def rules() -> dict[str, Any]:
     r = repository.active_admin_rules()

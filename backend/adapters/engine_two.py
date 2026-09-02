@@ -132,7 +132,11 @@ class EngineTwoAdapter(EngineAdapter):
         policy_conf = max(probs) if probs else 0.34
         decisiveness = max(0.0, (policy_conf - 1.0 / 3.0) / (1.0 - 1.0 / 3.0))
         forecast_edge = abs((sum(p_up) / len(p_up)) - 0.5) * 2 if p_up else 0.0
-        confidence = 0.65 * decisiveness + 0.35 * forecast_edge
+        # Four horizons pointing the same way is a different animal from a 2-2
+        # split with the same mean, so agreement gets its own weight rather than
+        # being averaged away.
+        agreement = float(d.get("horizon_agreement") or 0.0)
+        confidence = 0.5 * decisiveness + 0.3 * forecast_edge + 0.2 * abs(agreement)
         if direction == NEUTRAL:
             confidence = min(confidence, 0.5)
 
@@ -144,6 +148,16 @@ class EngineTwoAdapter(EngineAdapter):
             f"Forecaster P(up) over the next {len(p_up) or C2.HORIZON} bars: "
             f"{[round(p, 3) for p in p_up]}.",
         ]
+        if p_up:
+            reasons.append(f"Horizon agreement {agreement:+.2f} "
+                           f"({'unanimous' if abs(agreement) == 1 else 'split'} across "
+                           f"h1..h{len(p_up)}).")
+        decay = (d.get("drift") or {})
+        if decay.get("verdict") == "degraded":
+            reasons.append(
+                f"Model decay warning: live directional accuracy "
+                f"{decay.get('dir_acc', 0):.3f} over {decay.get('n', 0)} matured "
+                f"predictions — discount this engine until it is retrained.")
         if d.get("volatility") is not None:
             reasons.append(f"Realized volatility {float(d['volatility']):.4f}; "
                            f"model position flag {d.get('position', 0)}.")
@@ -161,5 +175,8 @@ class EngineTwoAdapter(EngineAdapter):
                       "forecast_edge": round(forecast_edge, 4),
                       "volatility": d.get("volatility"),
                       "model_position": d.get("position"),
-                      "model_pnl": d.get("pnl"), "bars_in": d.get("bars_in")},
+                      "model_pnl": d.get("pnl"), "bars_in": d.get("bars_in"),
+                      "horizon_agreement": d.get("horizon_agreement"),
+                      "model_version": d.get("model_version"),
+                      "drift": d.get("drift")},
             reasons=reasons, raw=d, source=source)

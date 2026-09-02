@@ -1,124 +1,203 @@
-# Trading pipeline — automated data, honest evaluation
+# engine_2 — forecaster + PPO agent, as a production pipeline
 
-Replaces the notebook's static `dataset.npz` upload and 20-case eyeball demo with
-a pipeline that can be run on a schedule and produces numbers you can act on.
+A CNN-BiLSTM-MHA forecaster and the PPO policy trained against it, packaged as
+scriptable jobs instead of a notebook. **This package is a model factory.** It
+pulls public market data, trains, gates, versions and promotes model bundles, and
+scores live bars. It contains no order placement, no execution and no withdrawal
+path — trading lives in `backend/execution`, driven by the Agent, and engine_2
+only ever hands it an opinion. A unit test enforces that
+(`tests/test_engine_2.py::test_engine_2_contains_no_order_placement`).
 
 ```
-fetch.py      ccxt paginated fetch -> incremental CSV cache
-features.py   the 16 features, causal, ONE definition
-dataset.py    windows + soft labels + chronological split + embargo + scaler
-models.py     architectures, custom objects, state vector, policy adapter
-train.py      forecaster fit + PPO, as a function (walk-forward calls it K times)
-backtest.py   event-driven backtest, full trade statistics, baselines
+config.py      every tunable, env-overridable with the ENGINE_2_* prefix
+fetch.py       ccxt paginated fetch, read-only key guard, retries -> CSV cache
+features.py    the 16 features, causal, ONE definition
+dataset.py     windows + volatility-scaled labels + train/val/test/HOLDOUT split
+models.py      architectures, the correctness-aware loss, the state vector
+gates.py       the checks that RAISE and stop the cycle
+train.py       forecaster fit + PPO (random env starts, warm start, entropy control)
+backtest.py    event-driven backtest, volatility-scaled costs, baselines
 walkforward.py rolling retrain/test folds
-promote.py    scores candidate vs incumbent on unseen bars, gates the swap
-retrain.py    the whole cycle in one command
-inference.py  live loop, decoupled, hot-reloads promoted models
+promote.py     test-slice gate + the untouched-holdout backtest
+registry.py    versioned bundles, promotion, rollback, retention
+drift.py       live predictions vs realized outcomes, rolling decay scorecard
+jobs.py        every stage as a callable job + one CLI (what the scheduler calls)
+retrain.py     the whole cycle in one command (wrapper over jobs.cycle)
+inference.py   live loop, hot-reloads promoted models, feeds the drift monitor
 ```
 
 ## Quick start
 
 ```bash
-pip install ccxt PyWavelets pandas numpy tensorflow
-export TRADER_ROOT=$PWD/trader
+pip install -r ../requirements.txt        # + tensorflow, ccxt, PyWavelets
 
-python -m trader.fetch --years 3          # ~105k 15m bars of BTC/USDT
-python -m trader.dataset                  # -> data/dataset.npz
-python -m trader.train                    # -> models_candidate/
-python -m trader.promote --gate           # scores it, promotes only if better
-python -m trader.inference --paper        # live loop
-python trader/tests/test_pipeline.py      # 8 property tests, no TF needed
+python -m engine_2.jobs pull              # ~105k 15m bars -> dataset.npz
+python -m engine_2.jobs cycle             # train, gate, holdout backtest, promote
+python -m engine_2.inference --paper      # live loop
+python -m pytest ../tests/test_engine_2.py -q
 ```
 
-Walk-forward (slow — trains K times, run it on the GPU box):
+## How it is consumed
 
-```python
-from trader.fetch import load_cache
-from trader.train import train_fold
-from trader import walkforward as wf
-wf.run(load_cache(), train_fold, n_folds=6, out_json="reports/wf.json")
-```
+`backend/adapters/engine_two.py` is the only consumer. It reads engine_2 either
+`inline` (importing `inference.Runner`, feeding it the broker's real position) or
+`file` (tailing `reports/live_decisions.jsonl`), and turns a decision into an
+`EngineSignal` for the Agent. Model artifacts are read from
+`ENGINE_2_MODELS_DIR` (default `engine_2/models/`), which is always a copy of a
+version directory that passed the gates.
+
+Everything engine_2 publishes for the rest of the system:
+
+| Surface | What |
+|---|---|
+| `models/` + `models/CURRENT.json` | the promoted bundle and which version it is |
+| `reports/live_decisions.jsonl` | one JSON line per bar: action, probs, p_up, drift |
+| `app_state.engine_2_drift` | rolling live decay scorecard |
+| `app_state.engine_2_last_cycle` | the last retraining cycle's outcome |
+| `GET /engine2/models` | versions, current, drift, last cycle |
+| `POST /admin/engine2/retrain`, `/rollback` | operator controls (admin token) |
 
 ## Scheduling
 
-| Job | Cadence | How |
+Two loops, in `pipeline/scheduler.py`, following the same `PeriodicTask` pattern
+engine_3 uses — a task that throws logs, records an event and runs again.
+
+| Task | Default | Env |
 |---|---|---|
-| inference | every bar | `systemd` service or Docker; the loop self-schedules to candle close +5s |
-| retrain | weekly/monthly | cron: `0 3 * * 0 cd /opt/bot && python -m trader.retrain --walkforward` |
+| `engine_2_drift` | hourly, on whenever engine_2 is enabled | `ENGINE_2_DRIFT_INTERVAL_S` |
+| `engine_2_training` | weekly, **off by default** | `ENGINE_2_AUTO_TRAIN`, `ENGINE_2_TRAIN_INTERVAL_S` |
 
-The two never touch. Retrain writes `models_candidate/`; the gate copies into
-`models/` and keeps the previous bundle in `models_prev/`; the inference loop
-notices the mtime change and reloads on the next bar. A retrain that fails, or a
-candidate that loses to the incumbent, leaves the live model exactly where it was.
+Training is hours of GPU, not the minutes engine_3 needs, so the usual deployment
+runs the API with `ENGINE_2_AUTO_TRAIN=0` and trains on a separate box from cron:
 
-## The five changes, and where they live
+```
+0 3 * * 0  cd /opt/spot5/backend && python -m engine_2.jobs cycle --walkforward
+```
 
-1. **Automated data** — `fetch.py`. First run pages back 3 years, later runs only
-   fetch the missing head. Gaps are reported, never interpolated. The in-progress
-   candle is dropped (its OHLC is still changing).
-2. **Chronological split** — `dataset.chronological_split`. Train is oldest, test
-   is newest, with a `WINDOW_SIZE + HORIZON` embargo at each seam. Without the
-   embargo the last training window and the first validation window literally
-   share candles. The scaler is fitted on train only and saved with the model, so
-   live inference applies the identical transform.
-3. **More data, one pair** — `config.HISTORY_YEARS = 3`, `SYMBOL = BTC/USDT`.
-   Three years spans a bear leg, a chop regime, and a bull leg. The 7-symbol
-   forecaster + BTC agent split in the notebook mixes the question "does this
-   generalise across assets" with "does it work at all" — answer the second first.
-4. **Real backtest** — `backtest.py` + `promote.evaluate`. Thousands of trades
-   with win rate, expectancy (with a bootstrap CI), profit factor, Sharpe,
-   Sortino, max drawdown, Calmar, exposure, exit mix, and — the part that matters —
-   the same metrics for a random trader and buy-and-hold on identical bars.
-   `edge_after_costs` is only true when the 95% CI on expectancy excludes zero.
-5. **Walk-forward** — `walkforward.py`. K rolling folds, each retrained from
-   scratch, each tested on unseen bars. `consistent_edge` requires ≥75% of folds
-   profitable and median Sharpe > 0.5. One good fold is a coincidence.
+Set `ENGINE_2_RETRAIN_ON_DRIFT=1` to let a sustained live decay trigger a cycle
+without waiting for the weekly slot.
+
+The training and inference paths never touch. A cycle writes
+`models_candidate/`, promotion freezes it into `models_versions/<version>/` and
+copies it to `models/`, and the inference loop notices the mtime change and
+reloads on the next bar. A failed cycle leaves the live model exactly where it
+was.
+
+## Data and credentials
+
+`BINANCE_API_KEY` / `BINANCE_API_SECRET` are **optional** and buy nothing but a
+higher rate limit — Binance serves OHLCV unauthenticated. They must be read-only:
+`fetch.assert_read_only()` queries the key's permissions at the start of every
+pull and raises if the key can trade, use margin or withdraw. Exchange downtime,
+rate limits and transient errors are retried with exponential backoff. Gaps in
+history are reported and left alone; a synthetic candle is a fabricated training
+example.
+
+## What changed from the notebook, and why
+
+**Labels were nearly information-free.** `sigmoid(return * 400)` maps a typical
+15m BTC move (0.05–0.3%) to 0.51–0.56 — indistinguishable from "no idea" — so the
+loss was dominated by a handful of >1% bars. `dataset.soft_labels` now divides the
+h-bar return by the trailing sigma of 1-bar returns (grown as `sqrt(h)`) and
+sigmoids that, so a one-sigma move is 0.73 in every regime and the label says how
+*unusual* a move is, not how *big*.
+
+**The anti-collapse penalty rewarded noise.** `collapse_aware_bce` only required
+batch std > 0.05, which a model can satisfy by predicting 0.3/0.7 at random —
+which is why `predStd` stopped being evidence of anything. It now subtracts
+`mean((2*label-1)*(2*pred-1))`: dispersion pays only when it points the right way,
+and confident mistakes are punished symmetrically.
+
+**Three of four horizons were dead weight.** h1–h4 were computed and only
+`forecast[0]` was ever read. All four are now in the state vector, plus a signed
+`horizon_agreement` scalar (+1 unanimous up, −1 unanimous down), and the PPO
+reward pays an entry bonus only when the horizons agree with the trade.
+
+**`BACKTEST_HOLDOUT` was defined and never used.** There is now a fourth split
+after `test`, embargoed like the others, read exactly once by
+`promote.final_backtest` — after every tuning decision has already been made. It
+reports Sharpe, max drawdown and win rate, and it is a required gate: a candidate
+that fails it is not promoted, whatever its `test` numbers say.
+
+**Leakage.** The split is strictly chronological with a `WINDOW_SIZE + HORIZON`
+embargo at each of the three seams, and the scaler is fitted on train only and
+shipped with the model. `test_split_is_chronological_embargoed_and_keeps_a_holdout`
+and `test_features_are_causal` keep it honest.
+
+**The always-HOLD policy.** The root cause was a forecaster whose signal did not
+survive fees — a near-constant policy is the rational answer to that, so the label
+and loss fixes above are the real repair. Three things back them up:
+`policy_spread` (mean std of P(action) across states) is measured every update,
+the entropy coefficient is raised automatically while it is low and decayed once
+it recovers, and `gates.check_policy` **rejects** a bundle whose final spread is
+below `ENGINE_2_GATE_MIN_POLICY_SPREAD`. The notebook's shipped agent — 36% HOLD
+/ 28% BUY / 36% SELL whatever the market did — would not have passed.
+
+**512 identical environments.** Every env replayed the same candles from the same
+start, which parallelizes compute, not data. Each env now draws a random start
+offset every update and wraps around the series, so the agent never sees the same
+trajectory twice.
+
+**BTC/USDT only, deliberately.** The notebook trained the forecaster on 7 symbols
+and the agent on BTC alone, which conflates "does this generalise across assets"
+with "does it work at all". This is a documented single-pair policy: `ENGINE_2_SYMBOL`
+moves it, and broadening to a multi-symbol agent should wait until a single pair
+survives walk-forward.
+
+**The hold-a-winner bonus fought the take-profit.** `1.5 * price_ret` every bar
+while in profit was uncapped, so riding a position past `TAKE_PROFIT_PCT` scored
+better than the exit the risk rules were about to force. The multiplier now tapers
+linearly to 1.0 as unrealized gain approaches `TAKE_PROFIT_PCT`.
+
+**Costs were flat.** Slippage now scales with the same realized-volatility feature
+the policy sees (`config.slippage_for_vol`), in the PPO reward, the backtester and
+the live loop alike — so the agent is not taught that a fill during a crash costs
+what a fill on a dead Sunday costs.
+
+**Warnings became gates.** The `predStd` / `directionalAccuracy` checks printed
+and carried on; PPO then trained for an hour against a collapsed forecaster and
+the model shipped. `gates.py` raises `GateFailed`, and the cycle stops before any
+PPO compute or promotion.
+
+**Nothing was versioned.** `models/` was overwritten every run, so a bad model
+destroyed the good one it replaced. `registry.py` freezes every promoted bundle
+into `models_versions/<UTC-date>-<git-sha>/`, keeps the newest
+`ENGINE_2_MODEL_RETENTION` plus whatever is live, and makes rollback one command.
+
+**PPO always restarted from scratch.** `train_ppo(warm_start_dir=...)` fine-tunes
+the previous champion at a quarter of the learning rate, falling back to a fresh
+initialization when the saved actor's state shape no longer matches.
+
+**Nothing watched the live model.** `drift.py` keeps a rolling window of live
+predictions, resolves each against the realized close `HORIZON` bars later, and
+recomputes live `directionalAccuracy` / `predStd`. Below
+`ENGINE_2_DRIFT_MIN_DIR_ACC` for `ENGINE_2_DRIFT_BREACHES` consecutive checks it
+flags `retrain_recommended`, which the scheduler can act on automatically.
+
+**Export mismatch (found in the notebook, kept fixed).** PPO trained on
+`full_forecaster` predictions while the TF.js export shipped `forecaster`, the
+plain BiLSTM baseline — the deployed agent was fed a different model than the one
+it learned against. `models.FORECASTER_NAME` is the single switch used by
+training, evaluation and export alike.
 
 ## Execution assumptions
 
 Deliberately pessimistic, because an optimistic backtest is worse than none:
 
-- decisions on the close of bar *t*, filled at the **open of bar t+1** (the
-  notebook's reward filled at the current close — a price you cannot get);
-- fees and slippage on both legs;
-- stop/target checked intrabar against low/high; if both are touched in one bar,
-  the **stop** is assumed to fill first; a gap through the stop fills at the open.
+- decisions on the close of bar *t*, filled at the **open of bar t+1**;
+- fees and volatility-scaled slippage on both legs;
+- stop/target checked intrabar against low/high; if both are touched in one bar
+  the **stop** fills first; a gap through the stop fills at the open.
 
-`train.py` uses the same next-open fill in the PPO reward, so the agent optimizes
-the quantity the backtest measures.
+`train.py` uses the same next-open fill and the same cost model in the PPO reward,
+so the agent optimizes the quantity the backtest measures.
 
-## Things found in the notebook worth fixing regardless
+## A standing caveat
 
-- **Export mismatch (serious).** The PPO trained on `full_forecaster`
-  (CNN-BiLSTM-MHA) predictions, but the TF.js export converted `forecaster` (the
-  plain BiLSTM baseline) to `models/bilstm/model.json`. The deployed agent was
-  fed a different forecaster than the one it learned against. `models.py` has one
-  switch, `FORECASTER_NAME`, used by training, evaluation and export alike.
-- **The collapse penalty is treating a symptom.** `collapse_aware_bce` pushes
-  batch std above 0.05 whether or not the model has learned anything, so `predStd`
-  stops being evidence of signal. It is kept for compatibility, but the gate in
-  `promote.py` now judges on out-of-sample P&L, not on dispersion.
-- **512 identical environments.** The parallel envs share one price series and one
-  start index, so they differ only by action sampling — that is variance
-  reduction, not data diversity. Randomizing start offsets per env would give the
-  agent more regimes per update.
-- **`RETURN_CLIP = 0.1` with `SOFT_LABEL_SCALE = 400`** saturates any move beyond
-  roughly ±1% to the clip bounds, so a 1% and a 9% move carry the same label.
-- **Feature parity is the biggest unverified risk.** The original 10 indicators
-  live in a separate dataset notebook that was not in hand, so `features.py`
-  implements a documented set (RSI, MACD, Bollinger %B, ATR, volume z, EMA ratio,
-  realized vol, body ratio, plus a trailing z-scored close and clipped log return).
-  If your dataset notebook used different ones, port them into `_base_features()`
-  and retrain — do not serve a model features it never saw. `test_features_are_causal`
-  will keep whatever you write honest about look-ahead.
-
-## Tests
-
-`python trader/tests/test_pipeline.py` — no TensorFlow required.
-
-- appending future bars does not change any past feature (look-ahead check);
-- split ordering and embargo hold;
-- windows and labels stay aligned, labels never read past the end;
-- a round trip in a flat market loses exactly the round-trip cost;
-- a stop wick exits at the stop, not at the signal;
-- random trading on a random walk has negative expectancy (proves costs bite).
+`features.py` implements a documented 16-feature set (RSI, MACD, Bollinger %B,
+ATR, volume z, EMA ratio, realized vol, body ratio, a trailing z-scored close, a
+clipped log return, and 6 wavelet features). The notebook's original 10 indicators
+lived in a separate dataset notebook that was not in hand. If yours differ, port
+them into `_base_features()` and retrain — do not serve a model features it never
+saw. `test_features_are_causal` will keep whatever you write honest about
+look-ahead.

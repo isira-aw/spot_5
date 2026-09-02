@@ -1,4 +1,4 @@
-"""Walk-forward validation (point 5).
+"""Walk-forward validation.
 
 One train/test split tells you how the model did in one regime. Walk-forward
 retrains on a rolling window and tests on the next unseen block, so you get K
@@ -86,7 +86,10 @@ def run(candles: np.ndarray,
         policy = train_fn(fold)
 
         lo, hi = int(anchors[te][0]), int(anchors[te][-1]) + 2
-        res = bt.run(candles[:hi], policy, start=lo, cfg=cfg)
+        # same volatility-scaled costs the promotion backtest and the PPO
+        # reward use, so a fold's Sharpe is comparable to the gate's
+        res = bt.run(candles[:hi], policy, start=lo, cfg=cfg,
+                     vol=realized_volatility(candles[:hi, 4]))
         m = bt.metrics(res, cfg)
         m["fold"] = fi
         m["test_bars"] = [lo, hi]

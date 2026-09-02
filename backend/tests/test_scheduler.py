@@ -39,7 +39,11 @@ def test_the_scheduler_starts_its_loops_and_stops_them(env, fake_market, monkeyp
     s.start()
     try:
         names = {t.state.name for t in s.tasks}
-        assert names == {"decision_cycle", "maintenance", "engine_3_training"}
+        # engine_2's drift monitor rides along whenever engine_2 is enabled; its
+        # heavy training loop only appears with ENGINE_2_AUTO_TRAIN=1.
+        assert names == {"decision_cycle", "maintenance", "engine_3_training",
+                         "engine_2_drift"}
+        assert "engine_2_training" not in names
         assert s.status()["running"] is True
         deadline = time.time() + 3
         while ran["cycles"] == 0 and time.time() < deadline:

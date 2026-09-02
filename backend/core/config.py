@@ -182,6 +182,18 @@ class EngineSettings:
     engine_2_models_dir: str = field(default_factory=lambda: _env(
         "ENGINE_2_MODELS_DIR", os.path.join(BASE_DIR, "engine_2", "models")))
     engine_2_cache_s: int = field(default_factory=lambda: _int("ENGINE_2_CACHE_S", 60))
+    # engine_2 owns its own training cadence: retraining a CNN-BiLSTM + PPO is
+    # hours of GPU, not the minutes engine_3 needs, so it is off by default and
+    # usually run on a separate box via `python -m engine_2.jobs cycle`.
+    engine_2_auto_train: bool = field(default_factory=lambda: _flag("ENGINE_2_AUTO_TRAIN", False))
+    engine_2_train_interval_s: int = field(
+        default_factory=lambda: _int("ENGINE_2_TRAIN_INTERVAL_S", 604_800))   # weekly
+    engine_2_drift_interval_s: int = field(
+        default_factory=lambda: _int("ENGINE_2_DRIFT_INTERVAL_S", 3_600))
+    engine_2_retrain_on_drift: bool = field(
+        default_factory=lambda: _flag("ENGINE_2_RETRAIN_ON_DRIFT", False))
+    engine_2_epochs: int = field(default_factory=lambda: _int("ENGINE_2_EPOCHS", 60))
+    engine_2_ppo_updates: int = field(default_factory=lambda: _int("ENGINE_2_PPO_UPDATES", 200))
     max_signal_age_s: int = field(default_factory=lambda: _int("MAX_SIGNAL_AGE_S", 1800))
     engine_3_min_samples: int = field(default_factory=lambda: _int("ENGINE_3_MIN_SAMPLES", 40))
     engine_3_retention: int = field(default_factory=lambda: _int("ENGINE_3_MODEL_RETENTION", 10))

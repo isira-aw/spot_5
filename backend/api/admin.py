@@ -165,6 +165,38 @@ def reload_risk_model() -> dict[str, Any]:
     return get_risk_engine().load(force=True)
 
 
+# ── engine_2 ────────────────────────────────────────────────────────────────
+# Training and rollback only. engine_2 produces a model artifact; it has no order
+# path, and these endpoints deliberately expose none.
+@router.post("/engine2/retrain", summary="Run an engine_2 retraining cycle now")
+def engine_two_retrain(walkforward: bool = False, skip_fetch: bool = False,
+                       warm_start: bool = True,
+                       who: str = Depends(require_admin)) -> dict[str, Any]:
+    """Long-running (hours on CPU). Any gate failure leaves the live model as-is."""
+    from engine_2 import jobs as engine2_jobs
+    s = get_settings().engines
+    return engine2_jobs.cycle(epochs=s.engine_2_epochs, ppo_updates=s.engine_2_ppo_updates,
+                              walkforward=walkforward, warm_start=warm_start,
+                              skip_fetch=skip_fetch)
+
+
+@router.post("/engine2/rollback", summary="Serve a previous engine_2 model version")
+def engine_two_rollback(version: str | None = None,
+                        who: str = Depends(require_admin)) -> dict[str, Any]:
+    """Omit `version` to go back to whatever was live before the last promotion."""
+    from engine_2 import registry as engine2_registry
+    info = engine2_registry.rollback(version)
+    repository.record_event(f"engine_2 rolled back to {info['version']}",
+                            level="warning", category="engine_2", payload=info)
+    return info
+
+
+@router.get("/engine2/drift", summary="Live forecaster decay scorecard")
+def engine_two_drift(who: str = Depends(require_admin)) -> dict[str, Any]:
+    from engine_2 import drift
+    return drift.status()
+
+
 # ── cycles and scheduler ────────────────────────────────────────────────────
 @router.post("/cycle/run", summary="Run one decision cycle now")
 def run_cycle(payload: CyclePayload | None = None) -> dict[str, Any]:

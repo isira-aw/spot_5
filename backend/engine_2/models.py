@@ -19,8 +19,10 @@ from . import config as C
 
 FORECASTER_NAME = "cnn_bilstm_mha"      # or "bilstm"
 HIDDEN_UNITS, DROPOUT, L2 = 128, 0.2, 1e-5
-STATE_SIZE, ACTION_SIZE = 13, 3
+# 9 market/position slots + HORIZON forecast heads + 1 horizon-agreement scalar
+STATE_SIZE, ACTION_SIZE = 9 + C.HORIZON + 1, 3
 COLLAPSE_MIN_STD, COLLAPSE_WEIGHT = 0.05, 20.0
+CORRECT_MARGIN_WEIGHT = 2.0
 
 
 @keras.utils.register_keras_serializable(package="custom")
@@ -54,9 +56,27 @@ class MultiHeadAttentionBlock(layers.Layer):
 
 @keras.utils.register_keras_serializable(package="custom")
 def collapse_aware_bce(y_true, y_pred):
+    """BCE, a floor on batch dispersion, and — the part that matters — a reward
+    for dispersion that is *correct*.
+
+    The original penalty only asked that the batch std exceed 0.05. A network can
+    satisfy that with noise: predict 0.3/0.7 at random and the std term is happy
+    while the model knows nothing, which is why `predStd` stopped being evidence
+    of signal and the downstream PPO learned to ignore the forecast.
+
+    `signed_margin` is mean((2*label-1) * (2*pred-1)): it is positive only when
+    the model moves AWAY from 0.5 on the side that turns out to be right, and it
+    is symmetrically negative for confident mistakes. Subtracting it makes spread
+    profitable to the loss only when the spread carries direction. The std floor
+    is kept as a cheap early-training kick out of the constant-0.5 basin, but it
+    can no longer be the only thing being optimized.
+    """
     bce = tf.reduce_mean(keras.losses.binary_crossentropy(y_true, y_pred))
     avg_std = tf.reduce_mean(tf.math.reduce_std(y_pred, axis=0))
-    return bce + tf.maximum(0.0, COLLAPSE_MIN_STD - avg_std) * COLLAPSE_WEIGHT
+    floor = tf.maximum(0.0, COLLAPSE_MIN_STD - avg_std) * COLLAPSE_WEIGHT
+    signed_margin = tf.reduce_mean(
+        (2.0 * tf.cast(y_true > 0.5, tf.float32) - 1.0) * (2.0 * y_pred - 1.0))
+    return bce + floor - CORRECT_MARGIN_WEIGHT * signed_margin
 
 
 class DirectionalAccuracy(keras.metrics.Metric):
@@ -173,14 +193,28 @@ def load_bundle(models_dir=C.MODELS_DIR):
             load(f"{models_dir}/ppo/value/model.keras"))
 
 
-# ── state vector (13) — the ONLY definition ─────────────────────────────────
+# ── state vector (STATE_SIZE) — the ONLY definition ──────────────────────────
+def horizon_agreement(forecast) -> float:
+    """Signed unanimity of the HORIZON heads: +1 all four say up, -1 all four say
+    down, 0 a 2-2 split.
+
+    The notebook computed h1..h4 and then read `forecast[0]` everywhere, so three
+    quarters of the forecaster's output was paid for and thrown away. Agreement
+    across horizons is the cheap, informative summary of the rest: a move that
+    only h1 likes is noise, one that all four like is a trend.
+    """
+    f = np.asarray(forecast, dtype=np.float32)[:C.HORIZON]
+    return float(np.mean(np.sign(f - 0.5)))
+
+
 def assemble_state(candles, i, forecast, position, entry_price, bars_in_pos, volatility):
     o, high, low, close = candles[i, 1], candles[i, 2], candles[i, 3], candles[i, 4]
     pnl = (close - entry_price) / entry_price if position == 1 and entry_price > 0 else 0.0
     return np.array([
         1 - position, pnl, min(bars_in_pos / 100.0, 1.0),
         (o - close) / close, (high - close) / close, (low - close) / close,
-        (high - low) / close, position, volatility, *forecast[:4],
+        (high - low) / close, position, volatility,
+        *forecast[:C.HORIZON], horizon_agreement(forecast),
     ], dtype=np.float32)
 
 

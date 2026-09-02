@@ -8,7 +8,9 @@ Execution assumptions, all pessimistic on purpose:
   * decisions are made on the CLOSE of bar t and filled at the OPEN of bar t+1
     (the notebook's runner rewarded a fill at the current close, which is a fill
     at a price you cannot get);
-  * fees and slippage are charged on both legs;
+  * fees are charged on both legs, and slippage is charged on both legs at a
+    rate that RISES WITH REALIZED VOLATILITY (`config.slippage_for_vol`) — a
+    fixed cost flatters exactly the violent bars a model most wants to trade;
   * stop-loss and take-profit are checked intrabar against low/high, and when
     both are touched in the same bar the STOP is assumed to fill first;
   * a gap through the stop fills at the open, not at the stop price.
@@ -28,11 +30,12 @@ HOLD, BUY, SELL = 0, 1, 2
 @dataclass
 class ExecConfig:
     fee: float = C.FEE_RATE
-    slippage: float = C.SLIPPAGE_PCT
+    slippage: float = C.SLIPPAGE_PCT      # cost at REFERENCE_VOL; see vol_scaled
     stop_loss: float = C.STOP_LOSS_PCT
     take_profit: float = C.TAKE_PROFIT_PCT
     bars_per_year: int = C.BARS_PER_YEAR
     max_bars_in_trade: int = 0        # 0 = no time stop
+    vol_scaled: bool = True           # scale slippage by the bar's realized vol
 
 
 @dataclass
@@ -49,8 +52,15 @@ class Trade:
 def run(candles: np.ndarray,
         actions: np.ndarray | Callable[[int, dict], int],
         start: int = 0,
-        cfg: ExecConfig = ExecConfig()) -> dict:
-    """candles: (n,>=6). actions: array aligned to bars, or fn(i, state)->action."""
+        cfg: ExecConfig = ExecConfig(),
+        vol: np.ndarray | None = None) -> dict:
+    """candles: (n,>=6). actions: array aligned to bars, or fn(i, state)->action.
+
+    vol: per-bar realized volatility aligned to `candles`. When given (and
+    cfg.vol_scaled), slippage on each leg is priced at that bar's volatility
+    instead of a flat rate. Omitted -> the flat cfg.slippage, which is what the
+    reference policies and the unit tests use.
+    """
     o, h, l, c = candles[:, 1], candles[:, 2], candles[:, 3], candles[:, 4]
     n = len(candles)
     callable_policy = callable(actions)
@@ -59,12 +69,20 @@ def run(candles: np.ndarray,
     pos, entry_px, entry_i, bars_in = 0, 0.0, -1, 0
     trades: list[Trade] = []
     eq = 1.0
-    slip, fee = cfg.slippage, cfg.fee
+    fee = cfg.fee
+    if vol is not None and cfg.vol_scaled:
+        slip_at = np.asarray(C.slippage_for_vol(np.asarray(vol, dtype=float)), dtype=float)
+        if len(slip_at) != n:                       # tolerate a short vol series
+            slip_at = np.resize(slip_at, n)
+    else:
+        slip_at = np.full(n, cfg.slippage, dtype=float)
+    entry_slip = cfg.slippage
 
     def close_trade(i, px, reason):
         nonlocal eq, pos, entry_px, entry_i, bars_in
         # buy filled slightly above, sell slightly below, fee on both legs
-        net = (px * (1 - slip) * (1 - fee)) / (entry_px * (1 + slip) * (1 + fee)) - 1.0
+        slip = slip_at[min(i, n - 1)]
+        net = (px * (1 - slip) * (1 - fee)) / (entry_px * (1 + entry_slip) * (1 + fee)) - 1.0
         eq *= (1 + net)
         trades.append(Trade(entry_i, i, entry_px, px, net, i - entry_i, reason))
         pos, entry_px, entry_i, bars_in = 0, 0.0, -1, 0
@@ -91,6 +109,7 @@ def run(candles: np.ndarray,
 
         if pos == 0 and a == BUY:
             pos, entry_px, entry_i, bars_in = 1, o[i + 1], i + 1, 0
+            entry_slip = slip_at[i + 1]
         elif pos == 1 and a == SELL:
             close_trade(i + 1, o[i + 1], "signal")
         elif pos == 1:
@@ -98,7 +117,8 @@ def run(candles: np.ndarray,
 
         # mark to market, net of the entry cost already paid
         if pos == 1:
-            equity[i] = eq * (c[i] * (1 - slip) * (1 - fee)) / (entry_px * (1 + slip) * (1 + fee))
+            equity[i] = eq * (c[i] * (1 - slip_at[i]) * (1 - fee)) / \
+                (entry_px * (1 + entry_slip) * (1 + fee))
         else:
             equity[i] = eq
 
