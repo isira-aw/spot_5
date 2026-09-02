@@ -3,6 +3,10 @@
 * **decision** — a cycle every ``CYCLE_SECONDS``.
 * **training** — engine_3 retrains itself on the system's own history, evaluates,
   promotes only if it wins, and prunes to the newest ten versions.
+* **engine_2 drift** — scores the live forecaster's predictions against what the
+  market actually did, and (optionally) triggers a retrain when it decays.
+* **engine_2 training** — the heavy one: fetch, forecaster, PPO, gates, holdout
+  backtest, versioned promotion. Off by default; it is hours of GPU, not minutes.
 * **maintenance** — database health, outbox replay, knowledge-base refresh,
   heartbeat.
 * **the trading lock** — only the instance holding the trading lock
@@ -109,6 +113,12 @@ class Scheduler:
         s = self.settings
         specs = [("maintenance", 300, self._maintenance, True),
                  ("engine_3_training", s.engines.engine_3_train_interval_s, self._train, False)]
+        if s.engines.engine_2_enabled:
+            specs.append(("engine_2_drift", s.engines.engine_2_drift_interval_s,
+                          self._engine_2_drift, False))
+        if s.engines.engine_2_auto_train:
+            specs.append(("engine_2_training", s.engines.engine_2_train_interval_s,
+                          self._engine_2_train, False))
         if is_trader:
             specs.insert(0, ("decision_cycle", s.cycle_seconds, self._cycle, True))
         else:
@@ -147,6 +157,35 @@ class Scheduler:
                      result.get("kind"), result.get("promoted"))
             if result.get("promoted"):
                 get_risk_engine().load(force=True)
+
+    # engine_2 is a model factory, not a trader: these two tasks only ever produce
+    # (or refuse to produce) an artifact. Nothing here can place an order.
+    def _engine_2_drift(self) -> None:
+        from engine_2 import jobs as engine2_jobs
+
+        status = engine2_jobs.check_drift()
+        repository.set_state("engine_2_drift_status", status, updated_by="scheduler")
+        if not status.get("retrain_recommended"):
+            return
+        log.warning("engine_2 forecaster drifted: %s", status.get("reasons"))
+        if self.settings.engines.engine_2_retrain_on_drift:
+            log.warning("triggering an unscheduled engine_2 retrain")
+            self._engine_2_train()
+
+    def _engine_2_train(self) -> None:
+        from engine_2 import jobs as engine2_jobs
+
+        s = self.settings.engines
+        result = engine2_jobs.cycle(epochs=s.engine_2_epochs,
+                                    ppo_updates=s.engine_2_ppo_updates)
+        repository.set_state("engine_2_last_cycle", result, updated_by="scheduler")
+        promoted = (result.get("promote") or {}).get("promoted", False)
+        if not result.get("ok"):
+            log.warning("engine_2 cycle stopped at the %s gate: %s",
+                        result.get("gate"), result.get("reasons"))
+        elif promoted:
+            log.info("engine_2 promoted version %s",
+                     (result.get("promote") or {}).get("version"))
 
     def _maintenance(self) -> None:
         health = healthcheck()
