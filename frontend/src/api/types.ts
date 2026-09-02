@@ -192,3 +192,64 @@ export interface TradeFrame {
   price?: number;
   [key: string]: unknown;
 }
+
+/**
+ * engine_2's model factory. Training is a background job — the UI starts one and
+ * polls `Engine2Job` until it leaves the `running` state.
+ */
+export interface Engine2Version {
+  version: string;
+  current: boolean;
+  created_at: number;
+  meta: {
+    registered_at?: string;
+    git?: string;
+    metrics?: Record<string, number>;
+    holdout?: Record<string, number | null>;
+    forecaster?: Record<string, unknown>;
+  };
+}
+
+export interface Engine2Drift {
+  verdict?: "healthy" | "degraded" | "warming_up";
+  ok?: boolean;
+  n?: number;
+  needed?: number;
+  dir_acc?: number;
+  recent_dir_acc?: number;
+  pred_std?: number;
+  breaches?: number;
+  reasons?: string[];
+  retrain_recommended?: boolean;
+  model_version?: string | null;
+  error?: string;
+}
+
+export interface Engine2Job {
+  job?: string;
+  state?: "running" | "succeeded" | "failed" | "gated" | "interrupted";
+  started_at?: string;
+  finished_at?: string | null;
+  step?: string;
+  detail?: string;
+  steps?: { step: string; detail: string; at: string }[];
+  error?: string | null;
+  result?: {
+    ok?: boolean;
+    gate?: string;
+    reasons?: string[];
+    elapsed_s?: number;
+    promote?: { promoted?: boolean; version?: string | null; reasons?: string[] };
+    bars?: number;
+  } | null;
+}
+
+export interface Engine2Models {
+  available: boolean;
+  error?: string;
+  current?: { version?: string; previous?: string | null; reason?: string; promoted_at?: string };
+  history?: Engine2Version[];
+  retention?: number;
+  drift?: Engine2Drift;
+  last_cycle?: unknown;
+}

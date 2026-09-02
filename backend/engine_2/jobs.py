@@ -25,6 +25,7 @@ import time
 
 from . import config as C
 from . import gates
+from . import runner
 
 log = logging.getLogger("engine_2.jobs")
 
@@ -146,8 +147,10 @@ def cycle(years: float = C.HISTORY_YEARS, epochs: int = 60, ppo_updates: int = 2
     result: dict = {"job": "cycle", "started_at": int(t0)}
     try:
         if not skip_fetch:
+            runner.progress("pull", "fetching candles and rebuilding the dataset")
             result["pull"] = pull(years=years)
         if walkforward:
+            runner.progress("walkforward", f"{folds} rolling folds, retrained from scratch")
             result["walkforward"] = walk_forward(folds=folds, epochs=epochs,
                                                  ppo_updates=ppo_updates)
             if not result["walkforward"]["consistent_edge"]:
@@ -155,12 +158,17 @@ def cycle(years: float = C.HISTORY_YEARS, epochs: int = 60, ppo_updates: int = 2
                     "the edge is not consistent across folds; a candidate that only "
                     "works in the most recent block is what the single-split gate "
                     "would wave through"], result["walkforward"])
+        runner.progress("train", "forecaster, then PPO, both gated")
         result["train"] = train_models(epochs, ppo_updates, warm_start)
+        runner.progress("promote", "test backtest, holdout backtest, promotion")
         result["promote"] = promote()
         result["ok"] = True
+        runner.progress("done", "promoted" if result["promote"]["promoted"]
+                        else "not promoted; live model untouched")
     except gates.GateFailed as exc:
         result |= {"ok": False, "gate": exc.stage, "reasons": exc.reasons,
                    "promoted": False}
+        runner.progress("gated", f"{exc.stage}: {'; '.join(exc.reasons)[:200]}")
         _event(f"engine_2 cycle stopped at the {exc.stage} gate", level="error",
                payload={"reasons": exc.reasons})
     result["elapsed_s"] = round(time.time() - t0, 1)

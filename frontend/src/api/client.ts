@@ -5,7 +5,15 @@
  * admin surface is not rendered at all — see `hasAdminToken` — rather than
  * offering controls that would come back 401.
  */
-import type { CycleRow, DeskState, EngineSignal, EquityPoint, Health } from "./types";
+import type {
+  CycleRow,
+  DeskState,
+  Engine2Job,
+  Engine2Models,
+  EngineSignal,
+  EquityPoint,
+  Health,
+} from "./types";
 
 const RAW_BASE = (import.meta.env.VITE_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 const ADMIN_TOKEN = (import.meta.env.VITE_ADMIN_TOKEN ?? "").trim();
@@ -54,6 +62,7 @@ export const api = {
   health: () => request<Health>("/health"),
   decisions: (limit = 20) => request<CycleRow[]>(`/decisions?limit=${limit}`),
   equity: (limit = 200) => request<EquityPoint[]>(`/equity?limit=${limit}`),
+  engine2Models: () => request<Engine2Models>("/engine2/models"),
   cycle: (cycleId: string) =>
     request<{ cycle_id: string; signals: EngineSignal[] }>(
       `/cycles/${encodeURIComponent(cycleId)}`,
@@ -64,6 +73,11 @@ export const api = {
  * Admin writes. Every one of these is triggered by an explicit, confirmed click
  * — never by page load, focus or reconnect.
  */
+async function adminGet<T>(path: string): Promise<T> {
+  if (!hasAdminToken) throw new ApiError("No admin token is configured.", 401);
+  return request<T>(path, { headers: { "X-Admin-Token": ADMIN_TOKEN } });
+}
+
 async function adminPost<T>(path: string, body?: unknown): Promise<T> {
   if (!hasAdminToken) throw new ApiError("No admin token is configured.", 401);
   return request<T>(path, {
@@ -80,4 +94,14 @@ export const admin = {
   setMode: (mode: "PAPER" | "REAL") => adminPost<unknown>("/admin/mode", { mode }),
   resetPaper: () => adminPost<unknown>("/admin/paper/reset"),
   scheduler: (action: "start" | "stop") => adminPost<unknown>(`/admin/scheduler/${action}`),
+
+  // engine_2 is a model factory: these train and promote a model artifact. None
+  // of them can place an order.
+  engine2Start: (body: { job: string; walkforward?: boolean; skip_fetch?: boolean }) =>
+    adminPost<Engine2Job>("/admin/engine2/job", body),
+  engine2Job: () => adminGet<Engine2Job>("/admin/engine2/job"),
+  engine2Rollback: (version?: string) =>
+    adminPost<{ version: string; previous: string | null }>(
+      `/admin/engine2/rollback${version ? `?version=${encodeURIComponent(version)}` : ""}`,
+    ),
 };

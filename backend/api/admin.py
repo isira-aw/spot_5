@@ -168,16 +168,65 @@ def reload_risk_model() -> dict[str, Any]:
 # ── engine_2 ────────────────────────────────────────────────────────────────
 # Training and rollback only. engine_2 produces a model artifact; it has no order
 # path, and these endpoints deliberately expose none.
-@router.post("/engine2/retrain", summary="Run an engine_2 retraining cycle now")
-def engine_two_retrain(walkforward: bool = False, skip_fetch: bool = False,
-                       warm_start: bool = True,
-                       who: str = Depends(require_admin)) -> dict[str, Any]:
-    """Long-running (hours on CPU). Any gate failure leaves the live model as-is."""
+#
+# The jobs run in the BACKGROUND: a full cycle is hours, which no HTTP request
+# can hold open. Starting one returns immediately with a job status the
+# dashboard polls.
+ENGINE_2_JOBS = ("pull", "cycle", "walkforward", "promote")
+
+
+class Engine2Job(BaseModel):
+    job: str = Field("cycle", description="pull | cycle | walkforward | promote")
+    walkforward: bool = False
+    skip_fetch: bool = False
+    warm_start: bool = True
+    epochs: int | None = Field(None, ge=1, le=1000)
+    ppo_updates: int | None = Field(None, ge=1, le=10_000)
+    folds: int = Field(5, ge=2, le=12)
+
+
+@router.post("/engine2/job", status_code=status.HTTP_202_ACCEPTED,
+             summary="Start an engine_2 job in the background")
+def engine_two_start_job(payload: Engine2Job | None = None,
+                         who: str = Depends(require_admin)) -> dict[str, Any]:
     from engine_2 import jobs as engine2_jobs
+    from engine_2 import runner as engine2_runner
+
+    payload = payload or Engine2Job()
+    if payload.job not in ENGINE_2_JOBS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown job {payload.job!r}; expected one of "
+                            f"{', '.join(ENGINE_2_JOBS)}")
     s = get_settings().engines
-    return engine2_jobs.cycle(epochs=s.engine_2_epochs, ppo_updates=s.engine_2_ppo_updates,
-                              walkforward=walkforward, warm_start=warm_start,
-                              skip_fetch=skip_fetch)
+    epochs = payload.epochs or s.engine_2_epochs
+    ppo_updates = payload.ppo_updates or s.engine_2_ppo_updates
+
+    if payload.job == "pull":
+        fn, kwargs = engine2_jobs.pull, {}
+    elif payload.job == "promote":
+        fn, kwargs = engine2_jobs.promote, {}
+    elif payload.job == "walkforward":
+        fn = engine2_jobs.walk_forward
+        kwargs = {"folds": payload.folds, "epochs": epochs, "ppo_updates": ppo_updates}
+    else:
+        fn = engine2_jobs.cycle
+        kwargs = {"epochs": epochs, "ppo_updates": ppo_updates,
+                  "walkforward": payload.walkforward, "folds": payload.folds,
+                  "warm_start": payload.warm_start, "skip_fetch": payload.skip_fetch}
+
+    try:
+        state = engine2_runner.start(payload.job, fn, kwargs, requested_by=who)
+    except RuntimeError as exc:                  # one job at a time
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    repository.record_event(f"engine_2 job '{payload.job}' started by {who}",
+                            category="engine_2", payload={"kwargs": kwargs})
+    return state
+
+
+@router.get("/engine2/job", summary="Progress of the running or last engine_2 job")
+def engine_two_job_status(who: str = Depends(require_admin)) -> dict[str, Any]:
+    from engine_2 import runner as engine2_runner
+    return engine2_runner.status()
 
 
 @router.post("/engine2/rollback", summary="Serve a previous engine_2 model version")
@@ -185,8 +234,11 @@ def engine_two_rollback(version: str | None = None,
                         who: str = Depends(require_admin)) -> dict[str, Any]:
     """Omit `version` to go back to whatever was live before the last promotion."""
     from engine_2 import registry as engine2_registry
-    info = engine2_registry.rollback(version)
-    repository.record_event(f"engine_2 rolled back to {info['version']}",
+    try:
+        info = engine2_registry.rollback(version)
+    except (RuntimeError, FileNotFoundError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    repository.record_event(f"engine_2 rolled back to {info['version']} by {who}",
                             level="warning", category="engine_2", payload=info)
     return info
 

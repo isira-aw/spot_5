@@ -26,7 +26,26 @@ retrain.py     the whole cycle in one command (wrapper over jobs.cycle)
 inference.py   live loop, hot-reloads promoted models, feeds the drift monitor
 ```
 
-## Quick start
+## Driving it from the dashboard
+
+The CLI below is the fallback, not the main path. The **Model factory** panel on
+the dashboard shows what is being served, whether the live model has decayed, and
+which versions you can fall back to, with buttons for pull / retrain / walk-forward
+/ roll back. Training runs in the background (`engine_2/runner.py`) — a full cycle
+is hours, which no HTTP request can hold open — so the panel starts a job and
+polls its progress. One job at a time; the buttons stay disabled while one runs.
+
+| Endpoint | What |
+|---|---|
+| `GET /engine2/models` | versions, current, drift, last cycle (public read) |
+| `POST /admin/engine2/job` | start `pull`, `cycle`, `walkforward` or `promote` |
+| `GET /admin/engine2/job` | progress of the running or last job |
+| `POST /admin/engine2/rollback` | serve the previous version again |
+
+A job left running by a killed worker is reported as `interrupted`, not as
+eternal progress.
+
+## Quick start (CLI)
 
 ```bash
 # TensorFlow, ccxt and PyWavelets are NOT in backend/requirements.txt: the API
