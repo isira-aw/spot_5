@@ -25,8 +25,27 @@ import time
 
 from . import config as C
 from . import gates
+from . import runner
 
 log = logging.getLogger("engine_2.jobs")
+
+DEPS_HINT = ("Install this package's dependencies:\n"
+             "    pip install -r backend/engine_2/requirements.txt")
+
+
+def _require(module: str, what: str):
+    """Fail with the command to run, not a bare ModuleNotFoundError.
+
+    TensorFlow is the big one: it is not in backend/requirements.txt because the
+    API process does not need it, so a fresh checkout hits this on the first
+    training run.
+    """
+    import importlib
+    try:
+        return importlib.import_module(module)
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(f"engine_2 needs {module} to {what}. "
+                                  f"{DEPS_HINT}") from exc
 
 
 def _event(message: str, *, level="info", payload: dict | None = None) -> None:
@@ -57,6 +76,7 @@ def pull(years: float = C.HISTORY_YEARS, force: bool = False) -> dict:
 
 def train_forecaster(epochs: int = 60, warm_start: bool = True) -> dict:
     """Forecaster only, with the hard gate. Used to fail fast before PPO."""
+    _require("tensorflow", "train the forecaster")
     from . import train as T
     from .dataset import load
 
@@ -74,6 +94,7 @@ def train_forecaster(epochs: int = 60, warm_start: bool = True) -> dict:
 def train_models(epochs: int = 60, ppo_updates: int = 200,
                  warm_start: bool = True) -> dict:
     """Forecaster + PPO -> models_candidate/. Raises GateFailed on a bad model."""
+    _require("tensorflow", "train the forecaster and the PPO agent")
     from . import train as T
     from .dataset import load
 
@@ -92,6 +113,7 @@ def train_models(epochs: int = 60, ppo_updates: int = 200,
 
 def promote(register: bool = True) -> dict:
     """Gate the candidate on `test`, then on the untouched `holdout`, then swap."""
+    _require("tensorflow", "score the candidate model")
     from .promote import gate
 
     decision = gate(register=register)
@@ -125,8 +147,10 @@ def cycle(years: float = C.HISTORY_YEARS, epochs: int = 60, ppo_updates: int = 2
     result: dict = {"job": "cycle", "started_at": int(t0)}
     try:
         if not skip_fetch:
+            runner.progress("pull", "fetching candles and rebuilding the dataset")
             result["pull"] = pull(years=years)
         if walkforward:
+            runner.progress("walkforward", f"{folds} rolling folds, retrained from scratch")
             result["walkforward"] = walk_forward(folds=folds, epochs=epochs,
                                                  ppo_updates=ppo_updates)
             if not result["walkforward"]["consistent_edge"]:
@@ -134,12 +158,17 @@ def cycle(years: float = C.HISTORY_YEARS, epochs: int = 60, ppo_updates: int = 2
                     "the edge is not consistent across folds; a candidate that only "
                     "works in the most recent block is what the single-split gate "
                     "would wave through"], result["walkforward"])
+        runner.progress("train", "forecaster, then PPO, both gated")
         result["train"] = train_models(epochs, ppo_updates, warm_start)
+        runner.progress("promote", "test backtest, holdout backtest, promotion")
         result["promote"] = promote()
         result["ok"] = True
+        runner.progress("done", "promoted" if result["promote"]["promoted"]
+                        else "not promoted; live model untouched")
     except gates.GateFailed as exc:
         result |= {"ok": False, "gate": exc.stage, "reasons": exc.reasons,
                    "promoted": False}
+        runner.progress("gated", f"{exc.stage}: {'; '.join(exc.reasons)[:200]}")
         _event(f"engine_2 cycle stopped at the {exc.stage} gate", level="error",
                payload={"reasons": exc.reasons})
     result["elapsed_s"] = round(time.time() - t0, 1)

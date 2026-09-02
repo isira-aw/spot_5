@@ -1,0 +1,22 @@
+# engine_2 training and inference.
+#
+# Not in backend/requirements.txt on purpose: TensorFlow is a ~600MB install that
+# the API process does not need. A box that only SERVES the model needs this file;
+# a box that only runs the API can set ENGINE_2_SOURCE=file and skip it entirely.
+#
+#   pip install -r backend/engine_2/requirements.txt
+
+numpy>=1.24
+pandas>=2.0
+
+# market data. engine_2 uses ccxt for PUBLIC OHLCV only — fetch_ohlcv,
+# load_markets, milliseconds. It places no orders; see fetch.assert_read_only.
+ccxt>=4.2
+
+# the 6 wavelet features
+PyWavelets>=1.4
+
+# forecaster + PPO. Only needed to TRAIN, or to run inference in-process
+# (ENGINE_2_SOURCE=inline). Pin the major version you trained with: a bundle
+# saved by 2.x will not always load under 3.x.
+tensorflow>=2.15,<3

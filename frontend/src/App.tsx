@@ -14,6 +14,7 @@ import { DecisionPanel } from "./components/DecisionPanel";
 import { EnginePanel } from "./components/EnginePanel";
 import { EquityCurve } from "./components/EquityCurve";
 import { History } from "./components/History";
+import { ModelFactory } from "./components/ModelFactory";
 import { PortfolioPanel } from "./components/Portfolio";
 import { RiskPanel } from "./components/RiskPanel";
 import { StatusBar } from "./components/StatusBar";
@@ -164,6 +165,7 @@ export function App() {
                 cycleSeconds={desk.cycleSeconds}
               />
               <RiskPanel desk={desk} />
+              <ModelFactory onConfirm={setConfirmRequest} />
               {showControls ? (
                 <Controls desk={desk} onConfirm={setConfirmRequest} onDone={refresh} />
               ) : null}

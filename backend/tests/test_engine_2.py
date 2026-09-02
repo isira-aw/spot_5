@@ -7,6 +7,7 @@ The half that needs a GPU is checked by the gates themselves at training time.
 from __future__ import annotations
 
 import json
+import os
 
 import numpy as np
 import pytest
@@ -344,6 +345,126 @@ def test_incomplete_bundle_is_not_registerable(registry, tmp_path):
         fh.write("only half a bundle")
     with pytest.raises(FileNotFoundError):
         registry.register(str(tmp_path / "broken"))
+
+
+# ── cold start: no model trained yet ─────────────────────────────────────────
+def test_untrained_engine_2_says_so_plainly(tmp_path, monkeypatch):
+    """Before the first training cycle there is no bundle, and the operator needs
+    to be told that — not handed a Keras 'not an accessible .keras zip file'."""
+    monkeypatch.setenv("ENGINE_2_MODELS_DIR", str(tmp_path / "never_trained"))
+    from adapters.engine_two import EngineTwoAdapter
+
+    adapter = EngineTwoAdapter(enabled=True)
+    adapter.models_dir = str(tmp_path / "never_trained")
+    reason = adapter._cold_start_reason()
+    assert reason and "engine_2.jobs cycle" in reason
+    with pytest.raises(FileNotFoundError, match="no promoted model"):
+        adapter._get_runner()
+
+    # and once a bundle is there, the cold-start check gets out of the way
+    (tmp_path / "never_trained" / "forecaster").mkdir(parents=True)
+    (tmp_path / "never_trained" / "forecaster" / "model.keras").write_text("bundle")
+    assert adapter._cold_start_reason() is None
+
+
+def test_relative_model_paths_are_anchored_to_the_repo(monkeypatch):
+    """The same .env must work whatever directory the API was started from."""
+    import importlib
+
+    from core import config as core_config
+    monkeypatch.setenv("ENGINE_2_MODELS_DIR", "backend/engine_2/models")
+    settings = importlib.reload(core_config).get_settings(refresh=True)
+    resolved = settings.engines.engine_2_models_dir
+    assert os.path.isabs(resolved)
+    assert resolved.replace("\\", "/").endswith("backend/engine_2/models")
+
+
+# ── background job runner: what makes the UI able to drive this ──────────────
+@pytest.fixture
+def runner():
+    import importlib
+
+    mod = importlib.import_module("engine_2.runner")
+    mod._thread, mod._status = None, {}
+    return mod
+
+
+def _wait(runner_mod, timeout=5.0):
+    import time
+    deadline = time.time() + timeout
+    while runner_mod.is_running() and time.time() < deadline:
+        time.sleep(0.01)
+    return runner_mod.status()
+
+
+def test_runner_reports_a_job_from_start_to_finish(runner):
+    import threading
+
+    release = threading.Event()
+
+    def job():
+        release.wait(5)
+        return {"bars": 42}
+
+    state = runner.start("pull", job)
+    assert state["state"] == "running", "the UI must see the job before it ends"
+    assert state["job"] == "pull"
+    release.set()
+    final = _wait(runner)
+    assert final["state"] == "succeeded"
+    assert final["result"] == {"bars": 42}
+
+
+def test_runner_refuses_a_second_concurrent_job(runner):
+    import threading
+
+    release = threading.Event()
+    runner.start("cycle", lambda: release.wait(5))
+    try:
+        with pytest.raises(RuntimeError, match="already running"):
+            runner.start("cycle", lambda: None)
+    finally:
+        release.set()
+    _wait(runner)
+
+
+def test_runner_distinguishes_a_gate_from_a_crash(runner):
+    """A cycle that refuses to promote is not a failure — the pipeline worked."""
+    runner.start("cycle", lambda: {"ok": False, "gate": "forecaster",
+                                   "reasons": ["predStd too low"]})
+    assert _wait(runner)["state"] == "gated"
+
+    runner._status = {}
+    def boom():
+        raise ValueError("cuda is on fire")
+    runner.start("cycle", boom)
+    final = _wait(runner)
+    assert final["state"] == "failed"
+    assert "cuda is on fire" in final["error"]
+
+
+def test_runner_does_not_claim_a_dead_job_is_running(runner):
+    """A worker killed mid-train must not leave the UI polling forever."""
+    runner._set(job="cycle", state="running", started_at="then")
+    runner._thread = None
+    assert runner.status()["state"] == "interrupted"
+
+
+def test_progress_is_visible_while_a_job_runs(runner):
+    import threading
+
+    seen = threading.Event()
+
+    def job():
+        runner.progress("train", "forecaster")
+        seen.set()
+        return {"ok": True}
+
+    runner.start("cycle", job)
+    seen.wait(5)
+    _wait(runner)
+    steps = [s["step"] for s in runner.status()["steps"]]
+    assert "train" in steps
 
 
 # ── the hard constraint ──────────────────────────────────────────────────────
