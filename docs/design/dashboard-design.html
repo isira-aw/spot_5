@@ -1,0 +1,593 @@
+<title>Spot 5 Desk Design</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* ============ TOKENS ============ */
+:root{
+  --bg:#F2F3F2; --surface:#FBFBFA; --sunken:#EAECEA; --rail:#E7E7E4;
+  --line:#DDDFDC; --line-strong:#C6C9C5;
+  --ink:#14181A; --ink-2:#3D4448; --ink-3:#6C7570; --ink-4:#98A09B;
+  --accent:#3B4FA8; --accent-soft:#E3E6F4; --accent-ink:#2C3C86;
+  --gain:#1F7A55; --gain-soft:#E0EFE7;
+  --loss:#B93B2C; --loss-soft:#F6E4E0;
+  --warn:#8E6410; --warn-soft:#F5EBD6;
+  --hazard:#C2410C; --hazard-soft:#FBE7DC;
+  --shadow:0 1px 2px rgba(20,24,26,.05), 0 8px 24px -18px rgba(20,24,26,.35);
+  --f-body:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --f-prose:"Newsreader",Georgia,"Times New Roman",serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px; --s8:72px;
+  --r1:2px; --r2:4px; --r3:8px; --r-pill:999px;
+  --m-fast:120ms; --m-base:220ms; --m-slow:420ms; --ease:cubic-bezier(.2,.6,.2,1);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#101312; --surface:#171B1B; --sunken:#0B0E0E; --rail:#141817;
+    --line:#252A29; --line-strong:#39403E;
+    --ink:#E8ECEA; --ink-2:#B6BEBA; --ink-3:#8A938F; --ink-4:#636B68;
+    --accent:#8EA0F0; --accent-soft:#1D2340; --accent-ink:#AFBBF7;
+    --gain:#4FBF8D; --gain-soft:#12291F;
+    --loss:#E4735F; --loss-soft:#2E1613;
+    --warn:#D6A548; --warn-soft:#2A2011;
+    --hazard:#F0703A; --hazard-soft:#31170C;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 30px -20px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"], .t-dark.t-dark{
+  --bg:#101312; --surface:#171B1B; --sunken:#0B0E0E; --rail:#141817;
+  --line:#252A29; --line-strong:#39403E;
+  --ink:#E8ECEA; --ink-2:#B6BEBA; --ink-3:#8A938F; --ink-4:#636B68;
+  --accent:#8EA0F0; --accent-soft:#1D2340; --accent-ink:#AFBBF7;
+  --gain:#4FBF8D; --gain-soft:#12291F;
+  --loss:#E4735F; --loss-soft:#2E1613;
+  --warn:#D6A548; --warn-soft:#2A2011;
+  --hazard:#F0703A; --hazard-soft:#31170C;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 30px -20px rgba(0,0,0,.9);
+}
+.t-light.t-light{
+  --bg:#F2F3F2; --surface:#FBFBFA; --sunken:#EAECEA; --rail:#E7E7E4;
+  --line:#DDDFDC; --line-strong:#C6C9C5;
+  --ink:#14181A; --ink-2:#3D4448; --ink-3:#6C7570; --ink-4:#98A09B;
+  --accent:#3B4FA8; --accent-soft:#E3E6F4; --accent-ink:#2C3C86;
+  --gain:#1F7A55; --gain-soft:#E0EFE7;
+  --loss:#B93B2C; --loss-soft:#F6E4E0;
+  --warn:#8E6410; --warn-soft:#F5EBD6;
+  --hazard:#C2410C; --hazard-soft:#FBE7DC;
+  --shadow:0 1px 2px rgba(20,24,26,.05), 0 8px 24px -18px rgba(20,24,26,.35);
+}
+
+/* ============ BASE ============ */
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{margin:0;font-weight:500;text-wrap:balance}
+p{margin:0}
+ul,ol{margin:0;padding:0;list-style:none}
+a{color:var(--accent);text-decoration-thickness:1px;text-underline-offset:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r1)}
+.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.eyebrow{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.mut{color:var(--ink-3)}
+.wrap{max-width:1320px;margin:0 auto;padding:0 var(--s5)}
+@media (max-width:640px){.wrap{padding:0 var(--s4)}}
+
+/* section headers: hairline rule + eyebrow, no boxes */
+.sec-head{display:flex;align-items:baseline;gap:var(--s3);padding-bottom:var(--s2);border-bottom:1px solid var(--line);margin-bottom:var(--s4)}
+.sec-head .grow{flex:1;min-width:0}
+
+/* ============ STATUS RAIL ============ */
+.rail{position:sticky;top:0;z-index:20;background:var(--rail);border-bottom:1px solid var(--line);backdrop-filter:saturate(1.2) blur(6px)}
+.rail-in{display:flex;align-items:center;gap:var(--s5);height:46px;overflow-x:auto;scrollbar-width:none}
+.rail-in::-webkit-scrollbar{display:none}
+.rail-item{display:flex;align-items:center;gap:var(--s2);white-space:nowrap;font-size:12px;color:var(--ink-2)}
+.rail-sep{width:1px;height:16px;background:var(--line-strong);flex:none}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--gain);flex:none;position:relative}
+.dot.pulse::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:1px solid var(--gain);animation:breathe 2.4s var(--ease) infinite}
+.dot.warn{background:var(--warn)} .dot.warn.pulse::after{border-color:var(--warn)}
+.dot.off{background:var(--ink-4)} .dot.off.pulse::after{display:none}
+@keyframes breathe{0%{opacity:.9;transform:scale(.8)}70%{opacity:0;transform:scale(1.5)}100%{opacity:0}}
+.pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:var(--r-pill);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1px solid transparent}
+.pill-paper{background:var(--accent-soft);color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent) 25%,transparent)}
+.pill-real{background:var(--hazard);color:#fff;border-color:var(--hazard)}
+.pill-quiet{background:transparent;color:var(--ink-3);border-color:var(--line-strong)}
+.pill-armed{background:var(--loss-soft);color:var(--loss);border-color:color-mix(in srgb,var(--loss) 35%,transparent)}
+.val{transition:color var(--m-slow) var(--ease)}
+.tick-up{color:var(--gain)} .tick-down{color:var(--loss)}
+.countdown{min-width:5ch;display:inline-block;text-align:right}
+.stale-tag{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--warn);background:var(--warn-soft);padding:1px 6px;border-radius:var(--r1)}
+
+/* REAL-mode hazard treatment */
+.real-band{height:3px;background:repeating-linear-gradient(135deg,var(--hazard) 0 8px,transparent 8px 16px)}
+
+/* ============ LAYOUT ============ */
+.grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:var(--s7);padding:var(--s6) 0 var(--s8)}
+@media (max-width:960px){.grid{grid-template-columns:minmax(0,1fr);gap:var(--s6)}}
+.col{display:flex;flex-direction:column;gap:var(--s7)}
+@media (max-width:960px){.col{gap:var(--s6)}}
+
+/* ============ DECISION PANEL (the hero) ============ */
+.note{background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--shadow);overflow:hidden}
+.note-top{display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--s5);padding:var(--s5) var(--s5) var(--s4)}
+.action{font-family:var(--f-prose);font-size:52px;line-height:.95;font-weight:500;letter-spacing:-.02em;transition:color var(--m-slow) var(--ease)}
+.action.hold{color:var(--ink)} .action.buy{color:var(--gain)} .action.sell{color:var(--loss)}
+.conf{display:flex;flex-direction:column;gap:6px;min-width:200px}
+.segs{display:flex;gap:3px}
+.seg{height:8px;flex:1;border-radius:var(--r1);background:var(--sunken);border:1px solid var(--line);transition:background var(--m-base) var(--ease)}
+.seg.on{background:var(--accent);border-color:var(--accent)}
+.seg.gate{border-color:var(--ink-3);border-style:dashed;background:transparent}
+.kv{display:flex;gap:var(--s5);flex-wrap:wrap}
+.kv > div{display:flex;flex-direction:column;gap:2px;min-width:88px}
+.kv .num{font-size:15px}
+.prose{padding:0 var(--s5) var(--s5);max-width:66ch}
+.prose p{font-family:var(--f-prose);font-size:17.5px;line-height:1.62;color:var(--ink);letter-spacing:.002em}
+.prose p + p{margin-top:.7em}
+.changemind{margin-top:var(--s5);padding-top:var(--s4);border-top:1px solid var(--line)}
+.changemind li{display:grid;grid-template-columns:16px 1fr;gap:var(--s2);padding:6px 0;font-size:13.5px;color:var(--ink-2)}
+.changemind li + li{border-top:1px dotted var(--line)}
+.changemind .m{color:var(--accent);font-family:var(--f-mono);font-size:11px;padding-top:3px}
+.note-foot{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);padding:var(--s3) var(--s5);background:var(--sunken);border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3)}
+
+/* ============ ENGINES ============ */
+.consensus{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) 0;font-size:13px;color:var(--ink-2)}
+.eng{display:grid;grid-template-columns:150px 96px 1fr;gap:var(--s4);align-items:start;padding:var(--s4) 0;border-top:1px solid var(--line)}
+@media (max-width:640px){.eng{grid-template-columns:1fr;gap:var(--s2)}}
+.eng-name{display:flex;flex-direction:column;gap:3px}
+.eng-name b{font-weight:600;font-size:13.5px}
+.chip{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;padding:1px 7px;border-radius:var(--r2);font-size:11px;font-weight:600;letter-spacing:.05em;border:1px solid var(--line-strong);color:var(--ink-2)}
+.chip.up{color:var(--gain);border-color:color-mix(in srgb,var(--gain) 40%,transparent);background:var(--gain-soft)}
+.chip.down{color:var(--loss);border-color:color-mix(in srgb,var(--loss) 40%,transparent);background:var(--loss-soft)}
+.chip.flat{color:var(--ink-3)}
+.chip.dead{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);background:var(--warn-soft)}
+.meter{height:4px;background:var(--sunken);border-radius:var(--r-pill);overflow:hidden}
+.meter i{display:block;height:100%;background:var(--ink-2);transition:width var(--m-slow) var(--ease)}
+.meter i.up{background:var(--gain)} .meter i.down{background:var(--loss)} .meter i.acc{background:var(--accent)}
+.eng-why li{font-size:13px;color:var(--ink-2);padding-left:14px;position:relative}
+.eng-why li::before{content:"";position:absolute;left:0;top:.62em;width:6px;height:1px;background:var(--line-strong)}
+.dissent{border-left:2px solid var(--warn);margin-left:-14px;padding-left:12px}
+
+/* ============ MONEY COLUMN ============ */
+.figures{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4) var(--s5)}
+.fig{display:flex;flex-direction:column;gap:2px;min-height:46px}
+.fig .n{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:19px;letter-spacing:-.02em;transition:color var(--m-slow) var(--ease)}
+.fig.lead .n{font-size:30px;letter-spacing:-.03em}
+.fig.lead{grid-column:1 / -1}
+.skel{display:inline-block;background:linear-gradient(90deg,var(--sunken),var(--line),var(--sunken));background-size:200% 100%;border-radius:var(--r1);color:transparent;animation:shim 1.4s linear infinite}
+@keyframes shim{to{background-position:-200% 0}}
+.chart{width:100%;height:132px;display:block}
+.chart-meta{display:flex;justify-content:space-between;font-size:11px;color:var(--ink-3);padding-top:6px}
+.caps li{display:grid;grid-template-columns:1fr auto;gap:2px var(--s3);padding:var(--s3) 0;border-top:1px solid var(--line);font-size:13px}
+.caps li .bar{grid-column:1 / -1;height:3px;background:var(--sunken);border-radius:var(--r-pill);overflow:hidden}
+.caps li .bar i{display:block;height:100%;background:var(--accent);transition:width var(--m-slow) var(--ease)}
+.caps li .bar i.hot{background:var(--warn)}
+.blocked{margin-top:var(--s4);padding:var(--s3) var(--s4);background:var(--warn-soft);border-left:2px solid var(--warn);border-radius:0 var(--r2) var(--r2) 0;font-size:13px;color:var(--ink)}
+.blocked b{color:var(--warn)}
+
+/* ============ HISTORY ============ */
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}
+th{text-align:left;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:600;padding:0 var(--s3) var(--s2) 0;border-bottom:1px solid var(--line)}
+td{padding:9px var(--s3) 9px 0;border-bottom:1px solid var(--line);color:var(--ink-2);vertical-align:top}
+tr.row-detail td{background:var(--sunken);color:var(--ink-2);font-size:12.5px}
+td.a-buy{color:var(--gain);font-weight:600} td.a-sell{color:var(--loss);font-weight:600} td.a-hold{color:var(--ink-2)}
+details summary{cursor:pointer;list-style:none;color:var(--accent);font-size:12px}
+details summary::-webkit-details-marker{display:none}
+
+/* ============ STATE GALLERY ============ */
+.states{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:var(--s4)}
+.spec{background:var(--bg);border:1px solid var(--line);border-radius:var(--r3);overflow:hidden;color:var(--ink)}
+.spec-h{display:flex;justify-content:space-between;align-items:center;padding:8px var(--s3);background:var(--sunken);border-bottom:1px solid var(--line);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.spec-b{padding:var(--s4);min-height:132px}
+.empty-note{font-size:13px;color:var(--ink-2);max-width:34ch}
+.empty-note b{display:block;color:var(--ink);font-weight:600;margin-bottom:4px}
+.err{font-size:13px;color:var(--ink-2)}
+.err b{display:block;color:var(--loss);font-weight:600;margin-bottom:4px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:var(--r2);border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:background var(--m-fast) var(--ease),border-color var(--m-fast) var(--ease)}
+.btn:hover{background:var(--sunken);border-color:var(--ink-4)}
+.btn-danger{border-color:color-mix(in srgb,var(--loss) 45%,transparent);color:var(--loss)}
+.btn-danger:hover{background:var(--loss-soft)}
+
+/* ============ DOC SECTIONS ============ */
+.doc{border-top:1px solid var(--line);padding:var(--s7) 0}
+.tokrow{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:var(--s3)}
+.tok{display:flex;align-items:center;gap:var(--s2);font-size:11.5px;color:var(--ink-2)}
+.sw{width:26px;height:26px;border-radius:var(--r2);border:1px solid var(--line-strong);flex:none}
+.deck{font-family:var(--f-prose);font-size:17px;line-height:1.6;max-width:66ch;color:var(--ink-2)}
+.toggle{display:inline-flex;border:1px solid var(--line-strong);border-radius:var(--r-pill);overflow:hidden}
+.toggle button{border:0;background:transparent;color:var(--ink-3);font:inherit;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer}
+.toggle button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+@media (prefers-reduced-motion:reduce){*,*::after{animation:none!important;transition:none!important}}
+</style>
+
+<header class="wrap" style="padding-top:var(--s7);padding-bottom:var(--s5)">
+  <div style="display:flex;flex-wrap:wrap;gap:var(--s4);align-items:flex-end;justify-content:space-between">
+    <div>
+      <p class="eyebrow">Phase 1 · Design specification</p>
+      <h1 style="font-family:var(--f-prose);font-size:38px;letter-spacing:-.02em;margin-top:6px">Spot 5 — the trading desk, rendered</h1>
+    </div>
+    <div class="toggle" role="group" aria-label="Theme">
+      <button type="button" data-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-set="dark" aria-pressed="false">Dark</button>
+      <button type="button" data-set="system" aria-pressed="true">System</button>
+    </div>
+  </div>
+  <p class="deck" style="margin-top:var(--s4)">Everything below is the real design at full fidelity — live type, live color, realistic payloads from the running server. The dashboard renders first, then every region in its loading, empty, stale, error and disconnected states, in both themes, then the tokens.</p>
+</header>
+
+<!-- =================== LIVE DASHBOARD =================== -->
+<div class="rail">
+  <div class="wrap"><div class="rail-in">
+    <span class="rail-item"><span class="dot pulse"></span><b style="color:var(--ink)">Live</b></span>
+    <span class="rail-sep"></span>
+    <span class="rail-item"><span class="pill pill-paper">Paper</span><span class="mut">simulated book</span></span>
+    <span class="rail-sep"></span>
+    <span class="rail-item"><span class="pill pill-quiet">Kill switch off</span></span>
+    <span class="rail-sep"></span>
+    <span class="rail-item">Next cycle <b class="num countdown" id="cd">04:12</b></span>
+    <span class="rail-sep"></span>
+    <span class="rail-item">BTC/USDT <b class="num val" id="px" style="color:var(--ink);font-size:13px">77,296.42</b>
+      <span class="mut">binance · 0.4 s</span></span>
+  </div></div>
+</div>
+
+<main class="wrap">
+  <div class="grid">
+    <!-- LEFT -->
+    <div class="col">
+      <!-- DECISION -->
+      <section aria-labelledby="h-dec">
+        <div class="sec-head">
+          <h2 class="eyebrow" id="h-dec">Agent decision</h2>
+          <span class="grow num" style="font-size:11px;color:var(--ink-4)">paper-20260901T194726-205bf6</span>
+          <span class="mut" style="font-size:11px">2 min ago · 15.6 s</span>
+        </div>
+        <article class="note">
+          <div class="note-top">
+            <div style="flex:1;min-width:180px">
+              <p class="eyebrow" style="margin-bottom:6px">Stance</p>
+              <div class="action hold">Hold</div>
+            </div>
+            <div class="conf">
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ink-3)">
+                <span>Confidence</span><span class="num" style="color:var(--ink)">0.25</span>
+              </div>
+              <div class="segs" role="img" aria-label="Confidence 0.25 of 1, below the 0.55 entry gate">
+                <i class="seg on"></i><i class="seg on"></i><i class="seg gate"></i><i class="seg"></i>
+                <i class="seg"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i>
+              </div>
+              <p style="font-size:11.5px;color:var(--ink-3)">Entry gate is <span class="num">0.55</span> — this is short of it.</p>
+            </div>
+            <div class="kv">
+              <div><span class="eyebrow">Size</span><span class="num">0.0 %</span></div>
+              <div><span class="eyebrow">Horizon</span><span class="num">N/A</span></div>
+            </div>
+          </div>
+          <div class="prose">
+            <p>Engine 1 is bearish with low conviction: the 4-hour trend has rolled over but volume behind the move is thin, and the 1-hour structure is still making higher lows. Engine 2's classifier puts the next-hour move at 46&nbsp;% up, which is coin-flip territory after fees. Engine 3 scores this setup at p(win)&nbsp;0.41 with an expected value of &minus;0.12&nbsp;R against our own trade history — the ranging regime it detects has been the worst environment for this strategy.</p>
+            <p>Two of the three engines are effectively neutral and the one that has an opinion disagrees with the price structure in front of it. The cost of waiting is one cycle; the cost of a 25&nbsp;% entry into a chop regime with a &minus;0.12&nbsp;R edge is real. I am staying flat.</p>
+            <div class="changemind">
+              <p class="eyebrow" style="margin-bottom:var(--s2)">What would change my mind</p>
+              <ul>
+                <li><span class="m">01</span><span>Engine&nbsp;1 confidence above <span class="num">0.55</span>, or its direction flipping to UP on the 4-hour.</span></li>
+                <li><span class="m">02</span><span>Engine&nbsp;2 next-hour probability above <span class="num">0.60</span> with the ATR band holding.</span></li>
+                <li><span class="m">03</span><span>Engine&nbsp;3 regime leaving <em>range</em> for <em>trend</em>, lifting expected value above <span class="num">+0.20 R</span>.</span></li>
+                <li><span class="m">04</span><span>A clean reclaim of <span class="num">78,400</span> on rising volume — that invalidates the bearish read outright.</span></li>
+              </ul>
+            </div>
+          </div>
+          <footer class="note-foot">
+            <span>groq:openai/gpt-oss-20b</span><span>Entry ref <span class="num">77,287.28</span></span>
+            <span>Stop —</span><span>Target —</span><span>Cycle 15.6 s</span>
+          </footer>
+        </article>
+      </section>
+
+      <!-- ENGINES -->
+      <section aria-labelledby="h-eng">
+        <div class="sec-head"><h2 class="eyebrow" id="h-eng">Engines</h2>
+          <span class="grow"></span><span class="mut" style="font-size:11px">all three answered</span></div>
+        <p class="consensus"><span class="chip dead" style="color:var(--warn)">Split 1 / 2</span>
+          Engine&nbsp;1 is the lone directional voice; engines&nbsp;2 and&nbsp;3 read this as noise.</p>
+        <div class="eng dissent">
+          <div class="eng-name"><b>engine_1</b><span class="mut" style="font-size:11.5px">market context</span>
+            <span class="chip down">Down</span></div>
+          <div><div class="meter"><i class="down" style="width:38%"></i></div>
+            <p class="num" style="font-size:12px;margin-top:5px">0.38</p>
+            <p class="mut" style="font-size:11px">412 ms · live</p></div>
+          <ul class="eng-why">
+            <li>4h EMA(21) crossed below EMA(55) two candles ago</li>
+            <li>Volume on the break is 0.7× the 20-bar average — unconfirmed</li>
+            <li>1h structure still printing higher lows at 76,910</li>
+          </ul>
+        </div>
+        <div class="eng">
+          <div class="eng-name"><b>engine_2</b><span class="mut" style="font-size:11.5px">ML forecast</span>
+            <span class="chip flat">Neutral</span></div>
+          <div><div class="meter"><i style="width:12%"></i></div>
+            <p class="num" style="font-size:12px;margin-top:5px">0.12</p>
+            <p class="mut" style="font-size:11px">1,180 ms · model v7</p></div>
+          <ul class="eng-why">
+            <li>P(up, next 1h) = 0.46 — inside the no-trade band</li>
+            <li>Realised vol at the 31st percentile of the last 30 days</li>
+          </ul>
+        </div>
+        <div class="eng">
+          <div class="eng-name"><b>engine_3</b><span class="mut" style="font-size:11.5px">self-trained risk</span>
+            <span class="chip flat">Range</span></div>
+          <div><div class="meter"><i style="width:41%"></i></div>
+            <p class="num" style="font-size:12px;margin-top:5px">0.41 p(win)</p>
+            <p class="mut" style="font-size:11px">88 ms · 214 samples</p></div>
+          <ul class="eng-why">
+            <li>Expected value <span class="num" style="color:var(--loss)">&minus;0.12 R</span>, size multiplier 0.4×</li>
+            <li>Nearest neighbours: 9 of 14 similar setups closed red</li>
+            <li>No veto — below the entry gate anyway</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- HISTORY -->
+      <section aria-labelledby="h-hist">
+        <div class="sec-head"><h2 class="eyebrow" id="h-hist">Recent cycles</h2><span class="grow"></span>
+          <span class="mut" style="font-size:11px">last 6 of 41</span></div>
+        <div class="tablewrap"><table>
+          <thead><tr><th style="width:96px">Time</th><th style="width:74px">Action</th><th style="width:64px">Conf.</th><th style="width:104px">Price</th><th>Note</th><th style="width:78px">Status</th></tr></thead>
+          <tbody>
+            <tr><td class="num">01:45:26</td><td class="a-hold">HOLD</td><td class="num">0.25</td><td class="num">77,287.28</td>
+              <td>Two engines neutral, one bearish and unconfirmed.
+                <details><summary>Detail</summary></details></td><td>ok</td></tr>
+            <tr class="row-detail"><td colspan="6">engine_1 DOWN 0.38 · engine_2 NEUTRAL 0.12 · engine_3 p(win) 0.41, EV &minus;0.12 R · gate 0.55 not met · 15,618 ms · groq:openai/gpt-oss-20b</td></tr>
+            <tr><td class="num">01:30:24</td><td class="a-hold">HOLD</td><td class="num">0.31</td><td class="num">77,410.05</td><td>Same range read; waiting for the 78.4k reclaim.</td><td>ok</td></tr>
+            <tr><td class="num">01:15:22</td><td class="a-buy">BUY</td><td class="num">0.61</td><td class="num">77,102.90</td><td>Blocked — daily trade cap reached.</td><td style="color:var(--warn)">blocked</td></tr>
+            <tr><td class="num">01:00:19</td><td class="a-sell">SELL</td><td class="num">0.68</td><td class="num">77,690.44</td><td>Closed the 0.031 BTC long, +0.42 R.</td><td>filled</td></tr>
+            <tr><td class="num">00:45:17</td><td class="a-hold">HOLD</td><td class="num">0.22</td><td class="num">77,520.10</td><td>Holding the open long into the vol contraction.</td><td>ok</td></tr>
+            <tr><td class="num">00:30:15</td><td class="a-hold">HOLD</td><td class="num">0.18</td><td class="num">77,344.61</td><td>engine_2 timed out; decided with two engines.</td><td style="color:var(--warn)">degraded</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+    </div>
+
+    <!-- RIGHT: MONEY -->
+    <div class="col">
+      <section aria-labelledby="h-port">
+        <div class="sec-head"><h2 class="eyebrow" id="h-port">Portfolio</h2><span class="grow"></span>
+          <span class="mut" style="font-size:11px">paper book</span></div>
+        <div class="figures">
+          <div class="fig lead"><span class="eyebrow">Equity</span>
+            <span class="n" aria-live="polite">10,412.88</span>
+            <span class="mut" style="font-size:12px">+4.13 % since 19:46 UTC</span></div>
+          <div class="fig"><span class="eyebrow">Cash</span><span class="n">10,412.88</span></div>
+          <div class="fig"><span class="eyebrow">Position</span><span class="n mut">flat</span></div>
+          <div class="fig"><span class="eyebrow">Unrealised</span><span class="n mut">0.00</span></div>
+          <div class="fig"><span class="eyebrow">Realised</span><span class="n" style="color:var(--gain)">+412.88</span></div>
+          <div class="fig"><span class="eyebrow">Max drawdown</span><span class="n">1.84 %</span></div>
+          <div class="fig"><span class="eyebrow">Win rate</span><span class="n">62.5 % <span class="mut" style="font-size:12px">· 8 trades</span></span></div>
+        </div>
+      </section>
+
+      <section aria-labelledby="h-eq">
+        <div class="sec-head"><h2 class="eyebrow" id="h-eq">Equity</h2><span class="grow"></span>
+          <span class="mut" style="font-size:11px">41 points · 10 h</span></div>
+        <svg class="chart" viewBox="0 0 320 132" preserveAspectRatio="none" role="img"
+             aria-label="Equity from 10,000 to 10,412.88 over ten hours, peak 10,468 at 01:05.">
+          <defs><linearGradient id="eqf" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--accent)" stop-opacity=".22"/>
+            <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+          <line x1="0" y1="96" x2="320" y2="96" stroke="var(--line)" stroke-width="1" fill="none"/>
+          <path id="eqfill" fill="url(#eqf)" stroke="none"/>
+          <path id="eqline" fill="none" stroke="var(--accent)" stroke-width="1.6"
+                stroke-linejoin="round" stroke-linecap="round"/>
+          <circle id="eqdot" r="3" fill="var(--accent)"/>
+        </svg>
+        <div class="chart-meta"><span class="num">10,000 start</span><span class="num">peak 10,468</span><span class="num">now 10,412.88</span></div>
+      </section>
+
+      <section aria-labelledby="h-risk">
+        <div class="sec-head"><h2 class="eyebrow" id="h-risk">Risk &amp; restrictions</h2><span class="grow"></span>
+          <span class="pill pill-quiet">Entries allowed</span></div>
+        <ul class="caps">
+          <li><span>Max position</span><span class="num">0 / 25 %</span><span class="bar"><i style="width:0%"></i></span></li>
+          <li><span>Capital at risk</span><span class="num">0.00 / 2.00 %</span><span class="bar"><i style="width:0%"></i></span></li>
+          <li><span>Trades today</span><span class="num">11 / 12</span><span class="bar"><i class="hot" style="width:92%"></i></span></li>
+          <li><span>Daily loss</span><span class="num">0.00 / 4.00 %</span><span class="bar"><i style="width:0%"></i></span></li>
+          <li><span>Min confidence</span><span class="num">0.55</span><span class="bar"><i style="width:25%"></i></span></li>
+        </ul>
+        <div class="blocked"><b>Blocked at 01:15:22 — daily trade cap.</b>
+          A BUY at confidence 0.61 cleared the gate but would have been the 13th fill today; the cap is 12. It resets at 00:00 UTC.</div>
+      </section>
+
+      <section aria-labelledby="h-ctl">
+        <div class="sec-head"><h2 class="eyebrow" id="h-ctl">Controls</h2><span class="grow"></span>
+          <span class="mut" style="font-size:11px">admin token present</span></div>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--s2)">
+          <button type="button" class="btn btn-danger">Arm kill switch</button>
+          <button type="button" class="btn">Run cycle now</button>
+          <button type="button" class="btn">Switch to REAL</button>
+          <button type="button" class="btn btn-danger">Reset paper book</button>
+        </div>
+        <p class="mut" style="font-size:12px;margin-top:var(--s3);max-width:44ch">Every one of these confirms first, naming the exact effect. Switching to REAL and resetting the book require typing the word back. Without a token configured, this whole section is absent — never disabled buttons that 401.</p>
+      </section>
+    </div>
+  </div>
+
+  <!-- =================== REAL MODE =================== -->
+  <section class="doc" aria-labelledby="h-real">
+    <div class="sec-head"><h2 class="eyebrow" id="h-real">REAL mode — the same rail, unmistakable</h2></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:var(--s4)">
+      <div class="spec t-light"><div class="spec-h"><span>Real · light</span></div>
+        <div class="real-band"></div>
+        <div class="rail" style="position:static"><div style="padding:0 var(--s3)"><div class="rail-in" style="height:42px;gap:var(--s4)">
+          <span class="rail-item"><span class="dot pulse"></span><b>Live</b></span>
+          <span class="rail-item"><span class="pill pill-real">Real money</span></span>
+          <span class="rail-item">Next <b class="num">04:12</b></span>
+          <span class="rail-item num">77,296.42</span>
+        </div></div></div>
+        <div class="spec-b" style="min-height:70px"><p class="err"><b style="color:var(--hazard)">Funds are live.</b>
+          Hazard band on top of the viewport, vermilion mode pill, and the accent stays indigo so the warning colour is only ever the mode.</p></div></div>
+      <div class="spec t-dark"><div class="spec-h"><span>Real · dark</span></div>
+        <div class="real-band"></div>
+        <div class="rail" style="position:static"><div style="padding:0 var(--s3)"><div class="rail-in" style="height:42px;gap:var(--s4)">
+          <span class="rail-item"><span class="dot warn pulse"></span><b>Reconnecting</b></span>
+          <span class="rail-item"><span class="pill pill-real">Real money</span></span>
+          <span class="rail-item"><span class="pill pill-armed">Kill switch armed</span></span>
+          <span class="rail-item num mut">77,296.42</span><span class="stale-tag">Stale 46 s</span>
+        </div></div></div>
+        <div class="spec-b" style="min-height:70px"><p class="err"><b>Armed and disconnected.</b>
+          The kill-switch pill turns red the moment it is armed and stays in the rail at every breakpoint. Prices dim and take a staleness tag rather than disappearing.</p></div></div>
+    </div>
+  </section>
+
+  <!-- =================== STATES =================== -->
+  <section class="doc" aria-labelledby="h-states">
+    <div class="sec-head"><h2 class="eyebrow" id="h-states">Every region, every state</h2>
+      <span class="grow"></span><span class="mut" style="font-size:11px">left column light · right column dark</span></div>
+
+    <h3 style="font-size:13px;margin:var(--s5) 0 var(--s3);color:var(--ink-2)">Decision panel</h3>
+    <div class="states">
+      <div class="spec t-light"><div class="spec-h"><span>Loading</span><span>light</span></div><div class="spec-b">
+        <p class="eyebrow">Stance</p>
+        <p class="skel" style="width:150px;height:44px;margin:6px 0"> </p>
+        <p class="skel" style="width:100%;height:10px;margin-bottom:6px"> </p>
+        <p class="skel" style="width:88%;height:10px;margin-bottom:6px"> </p>
+        <p class="skel" style="width:64%;height:10px"> </p></div></div>
+      <div class="spec t-dark"><div class="spec-h"><span>Empty</span><span>dark</span></div><div class="spec-b">
+        <p class="empty-note"><b>No decision yet.</b>The desk runs every 15 minutes. The first cycle starts at <span class="num">02:00 UTC</span> — about <span class="num">6 min</span> — and the agent's note appears here the moment it finishes. Nothing is wrong.</p>
+        <button type="button" class="btn" style="margin-top:var(--s3)">Run a cycle now</button></div></div>
+      <div class="spec t-light"><div class="spec-h"><span>Stale</span><span>light</span></div><div class="spec-b">
+        <div style="display:flex;gap:var(--s3);align-items:center"><span class="action hold" style="font-size:34px;color:var(--ink-3)">Hold</span>
+          <span class="stale-tag">38 min old</span></div>
+        <p class="err" style="margin-top:var(--s2)">Last cycle was at <span class="num">01:15</span>; two are overdue. Shown greyed because it may no longer describe the market. Scheduler status: <b style="color:var(--warn)">not running</b>.</p></div></div>
+      <div class="spec t-dark"><div class="spec-h"><span>Error</span><span>dark</span></div><div class="spec-b">
+        <p class="err"><b>The last cycle failed.</b>The agent provider returned 429 (rate limited) at 01:45:26 after 15.6 s. No order was placed and the book is untouched. The next cycle retries at <span class="num">02:00</span>.</p>
+        <button type="button" class="btn" style="margin-top:var(--s3)">Retry now</button></div></div>
+      <div class="spec t-light"><div class="spec-h"><span>Disconnected</span><span>light</span></div><div class="spec-b">
+        <div style="display:flex;gap:var(--s3);align-items:center"><span class="action hold" style="font-size:34px;color:var(--ink-3)">Hold</span>
+          <span class="pill pill-quiet"><span class="dot off"></span>Offline</span></div>
+        <p class="err" style="margin-top:var(--s2)">Socket down, polling <span class="num">/state</span> every 10 s. This is the last note we received, at <span class="num">01:45</span>. It is not being updated.</p></div></div>
+    </div>
+
+    <h3 style="font-size:13px;margin:var(--s6) 0 var(--s3);color:var(--ink-2)">Portfolio &amp; equity curve</h3>
+    <div class="states">
+      <div class="spec t-light"><div class="spec-h"><span>Loading</span><span>light</span></div><div class="spec-b">
+        <div class="figures"><div class="fig lead"><span class="eyebrow">Equity</span><span class="skel n" style="width:130px"> </span></div>
+          <div class="fig"><span class="eyebrow">Cash</span><span class="skel n" style="width:82px"> </span></div>
+          <div class="fig"><span class="eyebrow">Position</span><span class="skel n" style="width:64px"> </span></div></div>
+        <p class="mut" style="font-size:11px;margin-top:var(--s3)">Space is reserved at final size — nothing moves when the numbers land.</p></div></div>
+      <div class="spec t-dark"><div class="spec-h"><span>Empty</span><span>dark</span></div><div class="spec-b">
+        <div class="figures"><div class="fig lead"><span class="eyebrow">Equity</span><span class="n">10,000.00</span>
+          <span class="mut" style="font-size:12px">starting balance, no trades yet</span></div></div>
+        <p class="empty-note" style="margin-top:var(--s3)">The curve draws its first point after the first cycle and one point every cycle after that.</p></div></div>
+      <div class="spec t-light"><div class="spec-h"><span>Stale</span><span>light</span></div><div class="spec-b">
+        <div class="fig lead"><span class="eyebrow">Equity</span><span class="n" style="color:var(--ink-3)">10,412.88</span></div>
+        <p class="err" style="margin-top:var(--s2)"><span class="stale-tag">Priced 46 s ago</span> Marked-to-market values use a price older than two ticks. Cash and realised P&amp;L are unaffected and stay black.</p></div></div>
+      <div class="spec t-dark"><div class="spec-h"><span>Error</span><span>dark</span></div><div class="spec-b">
+        <p class="err"><b>Portfolio unavailable.</b>The database read failed (<span class="num">latency 5,000 ms, timeout</span>). Figures are hidden rather than shown as zero — a zero here would read as a wiped book.</p></div></div>
+      <div class="spec t-light"><div class="spec-h"><span>Disconnected</span><span>light</span></div><div class="spec-b">
+        <div class="fig lead"><span class="eyebrow">Equity <span class="mut">· last known</span></span><span class="n" style="color:var(--ink-3)">10,412.88</span></div>
+        <p class="err" style="margin-top:var(--s2)">Held from <span class="num">01:45:26</span>. Retrying in <span class="num">8 s</span> (attempt 4). The curve keeps its shape and stops extending.</p></div></div>
+    </div>
+
+    <h3 style="font-size:13px;margin:var(--s6) 0 var(--s3);color:var(--ink-2)">Engines, history, risk, status rail</h3>
+    <div class="states">
+      <div class="spec t-dark"><div class="spec-h"><span>Engines · loading</span><span>dark</span></div><div class="spec-b">
+        <div class="eng" style="grid-template-columns:1fr;border:0;padding:0;gap:10px">
+          <p class="skel" style="width:60%;height:12px"> </p><p class="skel" style="width:100%;height:4px"> </p>
+          <p class="skel" style="width:45%;height:12px"> </p><p class="skel" style="width:100%;height:4px"> </p></div></div></div>
+      <div class="spec t-light"><div class="spec-h"><span>Engines · error</span><span>light</span></div><div class="spec-b">
+        <div style="display:flex;flex-direction:column;gap:var(--s2)">
+          <span class="chip dead">engine_2 down</span>
+          <p class="err">Timed out after <span class="num">45 s</span>. The agent was told the quant engine is unavailable and decided with two engines — its confidence is capped at <span class="num">0.40</span> while any engine is down.</p></div></div></div>
+      <div class="spec t-dark"><div class="spec-h"><span>History · empty</span><span>dark</span></div><div class="spec-b">
+        <p class="empty-note"><b>No cycles recorded.</b>Each 15-minute cycle lands here with its action, confidence and the price it saw. Rows expand to show what each engine said.</p></div></div>
+      <div class="spec t-light"><div class="spec-h"><span>Risk · blocked</span><span>light</span></div><div class="spec-b">
+        <div class="blocked"><b>Kill switch armed — all entries blocked.</b>
+          Armed manually at 01:52 UTC. Existing positions are still managed and protective exits still fire; nothing new opens until it is disarmed.</div></div></div>
+      <div class="spec t-dark"><div class="spec-h"><span>Rail · three connection states</span><span>dark</span></div><div class="spec-b">
+        <div style="display:flex;flex-direction:column;gap:10px;font-size:12px">
+          <span class="rail-item"><span class="dot pulse"></span><b>Live</b><span class="mut">socket open · seq 1,284</span></span>
+          <span class="rail-item"><span class="dot warn pulse"></span><b>Reconnecting</b><span class="mut">attempt 4 · next try 8 s</span></span>
+          <span class="rail-item"><span class="dot off"></span><b>Offline (polling)</b><span class="mut">/state every 10 s · last 01:45:26</span></span></div></div></div>
+    </div>
+  </section>
+
+  <!-- =================== TOKENS =================== -->
+  <section class="doc" aria-labelledby="h-tok">
+    <div class="sec-head"><h2 class="eyebrow" id="h-tok">Tokens</h2></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--s6)">
+      <div>
+        <p class="eyebrow" style="margin-bottom:var(--s3)">Colour — light / dark</p>
+        <div class="tokrow">
+          <span class="tok"><i class="sw" style="background:#F2F3F2"></i>bg #F2F3F2 / #101312</span>
+          <span class="tok"><i class="sw" style="background:#FBFBFA"></i>surface #FBFBFA / #171B1B</span>
+          <span class="tok"><i class="sw" style="background:#EAECEA"></i>sunken #EAECEA / #0B0E0E</span>
+          <span class="tok"><i class="sw" style="background:#DDDFDC"></i>line #DDDFDC / #252A29</span>
+          <span class="tok"><i class="sw" style="background:#14181A"></i>ink #14181A / #E8ECEA</span>
+          <span class="tok"><i class="sw" style="background:#6C7570"></i>ink-3 #6C7570 / #8A938F</span>
+          <span class="tok"><i class="sw" style="background:#3B4FA8"></i>accent #3B4FA8 / #8EA0F0</span>
+          <span class="tok"><i class="sw" style="background:#1F7A55"></i>gain #1F7A55 / #4FBF8D</span>
+          <span class="tok"><i class="sw" style="background:#B93B2C"></i>loss #B93B2C / #E4735F</span>
+          <span class="tok"><i class="sw" style="background:#8E6410"></i>warn #8E6410 / #D6A548</span>
+          <span class="tok"><i class="sw" style="background:#C2410C"></i>hazard #C2410C / #F0703A</span>
+        </div>
+        <p class="mut" style="font-size:12px;margin-top:var(--s3);max-width:46ch">Neutrals carry a faint green-grey bias so the indigo accent reads as the only chromatic thing on the page. Semantic colours are separate from the accent and are never used for emphasis.</p>
+      </div>
+      <div>
+        <p class="eyebrow" style="margin-bottom:var(--s3)">Type</p>
+        <ul style="font-size:12.5px;color:var(--ink-2);display:flex;flex-direction:column;gap:6px">
+          <li><b style="font-family:var(--f-prose);font-size:16px">Newsreader</b> — the agent's note and the action word. The rationale is the product, so it is set like an analyst's memo.</li>
+          <li><b style="font-size:14px">IBM Plex Sans</b> — labels, controls, tables.</li>
+          <li><b class="num">IBM Plex Mono</b> — every figure, tabular, <span class="num">-0.01em</span> tracked.</li>
+        </ul>
+        <p class="eyebrow" style="margin:var(--s5) 0 var(--s2)">Scale</p>
+        <p class="num" style="font-size:12px;color:var(--ink-2)">10 · 11 · 12 · 13.5 · 14 · 17.5 · 19 · 30 · 38 · 52 px &nbsp;/&nbsp; line-height 1.5 UI, 1.62 prose</p>
+        <p class="eyebrow" style="margin:var(--s5) 0 var(--s2)">Space · radius · motion</p>
+        <p class="num" style="font-size:12px;color:var(--ink-2)">space 4 8 12 16 24 32 48 72 &nbsp;·&nbsp; radius 2 4 8 999 &nbsp;·&nbsp; motion 120 / 220 / 420 ms, cubic-bezier(.2,.6,.2,1)</p>
+        <p class="mut" style="font-size:12px;margin-top:var(--s3);max-width:46ch">Value changes cross-fade colour over 420 ms and never animate size or position. Under <span class="num">prefers-reduced-motion</span> every transition and the connection pulse are switched off.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="doc" aria-labelledby="h-why" style="padding-bottom:var(--s8)">
+    <div class="sec-head"><h2 class="eyebrow" id="h-why">Rationale</h2></div>
+    <p class="deck">The desk's output is an argument, not a number, so the page is built as a document with an instrument rail on top rather than as a grid of cards. One thin sticky rail answers the first question — alive, which book, kill switch, next cycle, price and how old it is — in a single line that never moves. Below it the page splits asymmetrically: the agent's note occupies the wide column and is the only surface lifted off the ground, set in a reading serif at 17.5 px so the reasoning is read rather than skimmed, with "what would change my mind" as a numbered list because those conditions genuinely are ranked triggers. The money column is narrower and quieter, all figures monospaced and tabular, because it is checked rather than read. Everything else — engines, history, caps — is separated by hairlines and space instead of borders, which keeps the card weight for the one thing that deserves it. Colour is rationed: a single indigo accent for anything interactive, green and red reserved strictly for direction and P&amp;L, amber for degradation, and vermilion used for nothing except REAL money, so the mode can never be mistaken for a chart colour. Nothing on the page changes size when data arrives; only colour moves.</p>
+  </section>
+</main>
+
+<script>
+(function(){
+  var root=document.documentElement, btns=document.querySelectorAll('.toggle button');
+  btns.forEach(function(b){b.addEventListener('click',function(){
+    var v=b.dataset.set;
+    if(v==='system'){root.removeAttribute('data-theme');}else{root.setAttribute('data-theme',v);}
+    btns.forEach(function(o){o.setAttribute('aria-pressed',String(o===b));});
+  });});
+
+  // equity curve, drawn from real-shaped points
+  var eq=[10000,10008,9994,10021,10043,10036,10072,10058,10110,10142,10121,10188,10164,
+          10233,10260,10241,10298,10331,10309,10377,10402,10468,10441,10419,10412.88];
+  var W=320,H=132,PAD=8,min=Math.min.apply(null,eq),max=Math.max.apply(null,eq),span=(max-min)||1;
+  var pts=eq.map(function(v,i){
+    return [PAD+i*(W-PAD*2)/(eq.length-1), H-PAD-(v-min)/span*(H-PAD*2)];
+  });
+  var d=pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
+  document.getElementById('eqline').setAttribute('d',d);
+  document.getElementById('eqfill').setAttribute('d',d+' L'+(W-PAD)+' '+(H-PAD)+' L'+PAD+' '+(H-PAD)+' Z');
+  var last=pts[pts.length-1];
+  document.getElementById('eqdot').setAttribute('cx',last[0].toFixed(1));
+  document.getElementById('eqdot').setAttribute('cy',last[1].toFixed(1));
+
+  // demonstrate calm-under-motion: price and countdown tick without reflow
+  if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    var px=document.getElementById('px'), cd=document.getElementById('cd'), v=77296.42, t=252;
+    setInterval(function(){
+      var nv=v+(Math.random()-0.5)*22;
+      px.classList.remove('tick-up','tick-down');
+      void px.offsetWidth;
+      px.classList.add(nv>v?'tick-up':'tick-down');
+      v=nv;
+      px.textContent=v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+      setTimeout(function(){px.classList.remove('tick-up','tick-down');},600);
+    },2600);
+    setInterval(function(){
+      t=t<=0?900:t-1;
+      cd.textContent=String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
+    },1000);
+  }
+})();
+</script>

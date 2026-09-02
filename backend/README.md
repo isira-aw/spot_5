@@ -220,6 +220,7 @@ no network at all.
 | `GET /state` | the book, the position, the last decision, the restrictions as briefed |
 | `GET /decisions` `/trades` `/orders` `/equity` `/stats` | history, `?mode=PAPER\|REAL` |
 | `GET /events` | the audit trail |
+| `GET /ws` | the live feed: one snapshot on connect, then only what changed |
 | `GET /knowledge-base` `/engine3/models` `/admin/rules` | what the Agent is reading and obeying |
 | `PUT /admin/rules` | tighten the restrictions (versioned, audited) |
 | `POST /admin/kill-switch` | stop new entries now |
@@ -231,10 +232,38 @@ no network at all.
 
 Admin routes need `X-Admin-Token`.
 
+### The live feed
+
+`GET /ws` is a websocket. On connect it sends one `snapshot` — everything `/state`
+returns plus `/health`, the recent decisions and the equity curve — so a dashboard
+can paint before it makes a single REST call. After that it sends only what
+changed. Every message shares one envelope:
+
+```json
+{"type": "snapshot|price|cycle_start|decision|trade|portfolio|event|health|ping",
+ "ts": "2026-09-02T01:15:39.000Z", "seq": 1234, "data": {}}
+```
+
+`seq` counts from 1 per connection, so a gap means a message was missed and the
+client should reconnect for a fresh snapshot. Payloads are built by the same
+functions that serve the REST routes, so the two cannot drift apart.
+
+The decision loop runs in threads and the API in an asyncio loop; `core/bus.py`
+is the seam. Publishing is best-effort and non-blocking — the pipeline announces
+a cycle start, a decision, a trade and the resulting book, and a background task
+adds a `price` tick every 5 s and `health` every 30 s while anyone is listening.
+Nothing polls the database for changes, and nothing the socket does can slow a
+cycle down.
+
+The server pings every 20 s and expects `{"type": "pong"}`; two unanswered pings
+and the client is closed. Each client has its own bounded queue: one that falls
+behind is dropped rather than allowed to block the others. REST remains a
+complete fallback — poll `/state` if the socket cannot connect.
+
 ### Tests
 
 ```bash
-cd backend && python -m pytest tests -q      # 74 tests, no network, no LLM, no TensorFlow
+cd backend && python -m pytest tests -q      # 85 tests, no network, no LLM, no TensorFlow
 ```
 
 They run against a real SQLAlchemy schema on SQLite, so the queries and the schema

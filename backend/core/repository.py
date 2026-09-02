@@ -69,6 +69,12 @@ def record_event(message: str, *, level: str = "info", category: str = "general"
         pass
     except Exception as exc:                                     # pragma: no cover
         log.warning("event not recorded: %s", exc)
+    finally:
+        # Mirror it onto the live feed. Import locally: the bus is a leaf module
+        # and this keeps repository importable with no asyncio in the picture.
+        from core.bus import publish
+        publish("event", {"ts": utcnow(), "level": level, "category": category,
+                          "mode": mode, "message": str(message)[:4000], "payload": payload})
 
 
 def recent_events(limit: int = 50, category: str | None = None) -> list[dict]:

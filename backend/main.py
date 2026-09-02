@@ -16,6 +16,7 @@ own memory.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -33,7 +34,10 @@ from fastapi.responses import JSONResponse                       # noqa: E402
 
 from api.admin import router as admin_router                     # noqa: E402
 from api.routes import router as read_router                     # noqa: E402
+from api.ws import router as ws_router                           # noqa: E402
+from api.ws import start_publishers, stop_publishers             # noqa: E402
 from core import repository                                      # noqa: E402
+from core.bus import get_bus                                     # noqa: E402
 from core.config import PAPER, get_settings                      # noqa: E402
 from core.db import init_db, last_wait_error, wait_for_db                         # noqa: E402
 from core.logging_setup import setup_logging                     # noqa: E402
@@ -90,6 +94,9 @@ def boot(wait_seconds: int = 120) -> dict:
 async def lifespan(app: FastAPI):
     state = boot()
     settings = get_settings()
+    # The decision loop runs in threads; the bus is how it reaches the websocket.
+    get_bus().attach(asyncio.get_running_loop())
+    publishers = start_publishers()
     if settings.autostart_scheduler:
         get_scheduler().start()
     else:
@@ -98,6 +105,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await stop_publishers(publishers)
+        get_bus().detach()
         get_scheduler().stop()
         repository.record_event("process stopping", category="lifecycle",
                                 mode=settings.execution.mode)
@@ -117,6 +126,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 app.include_router(read_router, tags=["read"])
 app.include_router(admin_router, tags=["admin"])
+app.include_router(ws_router, tags=["live"])
 
 
 @app.get("/", include_in_schema=False)
@@ -124,7 +134,7 @@ def root():
     s = get_settings()
     return JSONResponse({
         "name": "spot_5", "mode": s.execution.mode, "symbol": s.execution.symbol,
-        "docs": "/docs", "health": "/health", "state": "/state",
+        "docs": "/docs", "health": "/health", "state": "/state", "live": "/ws",
         "brains": ["engine_1 (context/calibration)", "engine_2 (quant/ML)",
                    "engine_3 (risk, self-trained)", "llm_agent (the voice)"],
     })
