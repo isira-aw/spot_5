@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from adapters.engine_one import EngineOneAdapter
 from adapters.engine_two import EngineTwoAdapter
 from core import repository
+from core.bus import publish
 from core.config import get_settings
 from core.contracts import (BUY, SELL, AgentDecision, CycleResult, EngineSignal,
                             sane_levels, utcnow)
@@ -61,6 +62,9 @@ class Orchestrator:
         result = CycleResult(cycle_id=cycle_id, mode=self.mode, symbol=self.symbol,
                              started_at=utcnow())
         log.info("── cycle %s (%s %s) ──", cycle_id, self.mode, self.symbol)
+        self._broadcast("cycle_start", {"cycle_id": cycle_id, "mode": self.mode,
+                                        "symbol": self.symbol,
+                                        "started_at": result.started_at.isoformat()})
 
         try:
             price = self._price()
@@ -70,6 +74,11 @@ class Orchestrator:
             result.finished_at = utcnow()
             log.error("cycle aborted: %s", result.error)
             repository.save_cycle(result)
+            # A client that saw cycle_start must always see how the cycle ended.
+            self._broadcast("event", {"ts": result.finished_at, "level": "error",
+                                      "category": "cycle", "mode": self.mode,
+                                      "message": result.error,
+                                      "payload": {"cycle_id": cycle_id}})
             return result
 
         restrictions = repository.active_admin_rules()
@@ -93,6 +102,9 @@ class Orchestrator:
             result.status = "protective_exit"
             result.finished_at = utcnow()
             self._persist(result, decision=exit_decision, status="protective_exit")
+            self._publish_decision()
+            self._broadcast("trade", order)
+            self._publish_portfolio(result)
             return result
 
         # 2. The two forecasting engines, concurrently.
@@ -134,6 +146,7 @@ class Orchestrator:
                  decision.confidence, decision.size_pct, decision.source)
 
         decision_id = self._persist(result, decision=decision, status="ok")
+        self._publish_decision()
 
         # 5. Execution, if the operator has left it switched on.
         if autotrade and decision.action in (BUY, SELL):
@@ -144,6 +157,7 @@ class Orchestrator:
                          "signals": [s.to_dict() for s in signals]},
                 reason="agent")
             result.order = order
+            self._broadcast("trade", order)
             if not order.get("executed"):
                 result.blocked_by = order.get("reasons", [])
         elif decision.action in (BUY, SELL):
@@ -155,9 +169,29 @@ class Orchestrator:
         result.portfolio = self.store.state(self.symbol, price, kill_switch=killed)
         result.finished_at = utcnow()
         self._persist(result, decision=decision, status=result.status)
+        self._publish_portfolio(result)
         log.info("── cycle %s done in %dms ──", cycle_id,
                  int((result.finished_at - result.started_at).total_seconds() * 1000))
         return result
+
+    # ── the live feed ───────────────────────────────────────────────────────
+    def _broadcast(self, type_: str, data) -> None:
+        """Best-effort. A listening dashboard must never be able to break a cycle."""
+        try:
+            publish(type_, data)
+        except Exception:                       # pragma: no cover - defensive
+            log.debug("could not publish %s", type_, exc_info=True)
+
+    def _publish_decision(self) -> None:
+        """Read the decision back the way ``/state`` serves it, so shapes match."""
+        try:
+            self._broadcast("decision", repository.latest_decision(self.mode))
+        except Exception:
+            log.debug("could not publish the decision", exc_info=True)
+
+    def _publish_portfolio(self, result) -> None:
+        if result.portfolio is not None:
+            self._broadcast("portfolio", result.portfolio.to_dict())
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _price(self) -> float:
