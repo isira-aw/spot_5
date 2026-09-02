@@ -29,13 +29,20 @@ inference.py   live loop, hot-reloads promoted models, feeds the drift monitor
 ## Quick start
 
 ```bash
-pip install -r ../requirements.txt        # + tensorflow, ccxt, PyWavelets
+# TensorFlow, ccxt and PyWavelets are NOT in backend/requirements.txt: the API
+# process does not need a ~600MB deep-learning install. Training and in-process
+# inference do.
+pip install -r requirements.txt           # from backend/engine_2/
 
 python -m engine_2.jobs pull              # ~105k 15m bars -> dataset.npz
 python -m engine_2.jobs cycle             # train, gate, holdout backtest, promote
 python -m engine_2.inference --paper      # live loop
 python -m pytest ../tests/test_engine_2.py -q
 ```
+
+A box that only runs the API can skip all of it: set `ENGINE_2_SOURCE=file` and
+this process just tails the decision log written by whichever machine serves the
+model.
 
 ## How it is consumed
 

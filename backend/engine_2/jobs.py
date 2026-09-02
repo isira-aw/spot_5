@@ -28,6 +28,24 @@ from . import gates
 
 log = logging.getLogger("engine_2.jobs")
 
+DEPS_HINT = ("Install this package's dependencies:\n"
+             "    pip install -r backend/engine_2/requirements.txt")
+
+
+def _require(module: str, what: str):
+    """Fail with the command to run, not a bare ModuleNotFoundError.
+
+    TensorFlow is the big one: it is not in backend/requirements.txt because the
+    API process does not need it, so a fresh checkout hits this on the first
+    training run.
+    """
+    import importlib
+    try:
+        return importlib.import_module(module)
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(f"engine_2 needs {module} to {what}. "
+                                  f"{DEPS_HINT}") from exc
+
 
 def _event(message: str, *, level="info", payload: dict | None = None) -> None:
     """Audit trail if the backend is importable; a log line if it is not."""
@@ -57,6 +75,7 @@ def pull(years: float = C.HISTORY_YEARS, force: bool = False) -> dict:
 
 def train_forecaster(epochs: int = 60, warm_start: bool = True) -> dict:
     """Forecaster only, with the hard gate. Used to fail fast before PPO."""
+    _require("tensorflow", "train the forecaster")
     from . import train as T
     from .dataset import load
 
@@ -74,6 +93,7 @@ def train_forecaster(epochs: int = 60, warm_start: bool = True) -> dict:
 def train_models(epochs: int = 60, ppo_updates: int = 200,
                  warm_start: bool = True) -> dict:
     """Forecaster + PPO -> models_candidate/. Raises GateFailed on a bad model."""
+    _require("tensorflow", "train the forecaster and the PPO agent")
     from . import train as T
     from .dataset import load
 
@@ -92,6 +112,7 @@ def train_models(epochs: int = 60, ppo_updates: int = 200,
 
 def promote(register: bool = True) -> dict:
     """Gate the candidate on `test`, then on the untouched `holdout`, then swap."""
+    _require("tensorflow", "score the candidate model")
     from .promote import gate
 
     decision = gate(register=register)

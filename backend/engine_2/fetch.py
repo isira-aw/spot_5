@@ -45,7 +45,13 @@ FORBIDDEN_PERMISSIONS = ("enableSpotAndMarginTrading", "enableFutures",
 def _exchange(auth: bool = True):
     """A ccxt client for market data. Credentials are attached only when present,
     and only ever used for the higher public-endpoint rate limit."""
-    import ccxt  # imported lazily so backtests run without ccxt installed
+    try:
+        import ccxt  # imported lazily so backtests run without ccxt installed
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "engine_2 needs ccxt to pull market data. Install this package's "
+            "dependencies:\n    pip install -r backend/engine_2/requirements.txt"
+        ) from exc
     params = {"enableRateLimit": True, "options": {"defaultType": "spot"}}
     if auth and C.BINANCE_API_KEY and C.BINANCE_API_SECRET:
         params |= {"apiKey": C.BINANCE_API_KEY, "secret": C.BINANCE_API_SECRET}

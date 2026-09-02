@@ -119,7 +119,13 @@ def _wavelet_features(close: np.ndarray, w: int = C.WAVELET_WINDOW) -> np.ndarra
     series once and slicing it is a classic leak: db4 is a symmetric-ish filter,
     so coefficient k is contaminated by bars after k.
     """
-    import pywt
+    try:
+        import pywt
+    except ModuleNotFoundError as exc:                  # pragma: no cover
+        raise ModuleNotFoundError(
+            "engine_2 needs PyWavelets for the 6 wavelet features. Install this "
+            "package's dependencies:\n"
+            "    pip install -r backend/engine_2/requirements.txt") from exc
 
     n = len(close)
     out = np.zeros((n, 6), dtype=np.float32)
